@@ -1,0 +1,92 @@
+'use client';
+
+import {
+  Card,
+  CardContent,
+  Typography,
+  Box,
+  Stack,
+  Chip,
+  CardActionArea,
+} from '@mui/material';
+import {
+  Schedule as ScheduleIcon,
+  Group as GroupIcon,
+  AccessTime as AccessTimeIcon,
+} from '@mui/icons-material';
+import { format, formatDistanceToNow } from 'date-fns';
+import Link from 'next/link';
+import { Meeting } from '@/types';
+import { MeetingStatusChip } from './MeetingStatusChip';
+
+interface MeetingCardProps {
+  meeting: Meeting;
+}
+
+/**
+ * Card component displaying summary information about a meeting
+ */
+export function MeetingCard({ meeting }: MeetingCardProps) {
+  const startTime = new Date(meeting.startTime);
+  const durationHours = Math.floor(meeting.duration / 3600);
+  const durationMinutes = Math.floor((meeting.duration % 3600) / 60);
+
+  return (
+    <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <CardActionArea component={Link} href={`/meetings/${meeting.id}`}>
+        <CardContent>
+          <Typography variant="h6" component="h3" sx={{ mb: 1 }}>
+            {meeting.subject}
+          </Typography>
+
+          <Stack spacing={1.5} sx={{ mb: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <ScheduleIcon
+                sx={{
+                  fontSize: 18,
+                  color: 'text.secondary',
+                }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                {format(startTime, 'MMM d, yyyy')} at{' '}
+                {format(startTime, 'h:mm a')}
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <AccessTimeIcon
+                sx={{
+                  fontSize: 18,
+                  color: 'text.secondary',
+                }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                {durationHours > 0 && `${durationHours}h `}
+                {durationMinutes}m
+              </Typography>
+            </Box>
+
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <GroupIcon
+                sx={{
+                  fontSize: 18,
+                  color: 'text.secondary',
+                }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                {meeting.participants.length} participants
+              </Typography>
+            </Box>
+          </Stack>
+
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <MeetingStatusChip status={meeting.status} />
+            <Typography variant="caption" color="text.secondary">
+              {formatDistanceToNow(startTime, { addSuffix: true })}
+            </Typography>
+          </Box>
+        </CardContent>
+      </CardActionArea>
+    </Card>
+  );
+}
