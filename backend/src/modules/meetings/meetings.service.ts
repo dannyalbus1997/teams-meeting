@@ -22,6 +22,7 @@ import {
 } from '../../common/interfaces';
 import { TranscriptsService } from '../transcripts/transcripts.service';
 import { SummariesService } from '../summaries/summaries.service';
+import { GraphService } from '../graph/graph.service';
 
 @Injectable()
 export class MeetingsService {
@@ -34,6 +35,7 @@ export class MeetingsService {
     @Inject(STORAGE_PROVIDER) private storageProvider: StorageProvider,
     private transcriptsService: TranscriptsService,
     private summariesService: SummariesService,
+    private graphService: GraphService,
   ) {}
 
   async create(createMeetingDto: CreateMeetingDto): Promise<MeetingDocument> {
@@ -226,14 +228,13 @@ export class MeetingsService {
   }
 
   /**
-   * Process a meeting: tries existing transcript first, then stored recording.
-   * If the meeting already has a transcript saved (e.g. from live capture),
-   * it will use that text for AI analysis instead of requiring a recording.
+   * Process a meeting: tries existing transcript → Graph API transcript → stored recording.
+   * Accepts an optional accessToken to fetch transcripts from Graph API on-demand.
    */
-  async processMeeting(id: string): Promise<MeetingDocument> {
+  async processMeeting(id: string, accessToken?: string): Promise<MeetingDocument> {
     const meeting = await this.findOne(id);
 
-    // Option 1: If we already have a transcript (e.g. from live capture), use it for AI analysis
+    // ── Option 1: Use existing transcript in DB ──
     if (meeting.transcriptId) {
       try {
         const existingTranscript = await this.transcriptsService.findOne(
@@ -242,42 +243,71 @@ export class MeetingsService {
 
         if (existingTranscript && existingTranscript.fullText) {
           this.logger.log(`Processing meeting ${id} using existing transcript`);
-
-          // Run AI analysis on the existing transcript
-          await this.updateStatus(id, MeetingStatus.ANALYZING);
-
-          const startTime = Date.now();
-          const analysis = await this.aiProvider.analyzeTranscript(
-            existingTranscript.fullText,
-            meeting.subject,
-          );
-          const processingTimeMs = Date.now() - startTime;
-
-          const summary = await this.summariesService.create({
-            meetingId: id,
-            transcriptId: existingTranscript._id.toString(),
-            summary: analysis.summary,
-            keyPoints: analysis.keyPoints,
-            actionItems: analysis.actionItems,
-            decisions: analysis.decisions,
-            sentiment: analysis.sentiment,
-            topics: analysis.topics,
-            processingTimeMs,
-          });
-
-          await this.meetingModel.findByIdAndUpdate(id, { summaryId: summary._id });
-          await this.updateStatus(id, MeetingStatus.COMPLETED);
-
-          this.logger.log(`Meeting ${id} processed from existing transcript in ${processingTimeMs}ms`);
-          return await this.findOne(id);
+          return this.runAiAnalysis(id, existingTranscript.fullText, existingTranscript._id.toString(), meeting.subject);
         }
       } catch (error: any) {
         this.logger.warn(`Failed to use existing transcript for ${id}: ${error.message}`);
-        // Fall through to recording-based processing
       }
     }
 
-    // Option 2: Process from stored recording
+    // ── Option 2: Fetch transcript from Graph API ──
+    if (accessToken && meeting.joinUrl) {
+      this.logger.log(`Trying to fetch transcript from Graph API for meeting ${id}...`);
+      try {
+        const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(
+          accessToken,
+          meeting.joinUrl,
+        );
+
+        if (onlineMeeting) {
+          const transcripts = await this.graphService.listMeetingTranscripts(
+            accessToken,
+            onlineMeeting.meetingId,
+          );
+
+          if (transcripts.length > 0) {
+            const latestTranscript = transcripts[transcripts.length - 1];
+            const vttContent = await this.graphService.getTranscriptContent(
+              accessToken,
+              onlineMeeting.meetingId,
+              latestTranscript.id,
+              'text/vtt',
+            );
+
+            const parsed = this.graphService.parseVttTranscript(vttContent);
+
+            if (parsed.fullText.length > 0) {
+              this.logger.log(`Fetched transcript from Graph API (${parsed.segments.length} segments)`);
+              return this.processWithTranscriptText(id, parsed.fullText, parsed.segments, 'teams-native');
+            }
+          }
+
+          // Try recordings if no transcript
+          const recordings = await this.graphService.listMeetingRecordings(
+            accessToken,
+            onlineMeeting.meetingId,
+          );
+
+          if (recordings.length > 0) {
+            const latestRecording = recordings[recordings.length - 1];
+            const audioBuffer = await this.graphService.getRecordingContent(
+              accessToken,
+              onlineMeeting.meetingId,
+              latestRecording.id,
+            );
+
+            this.logger.log(`Fetched recording from Graph API, processing...`);
+            return this.processWithRecording(id, audioBuffer);
+          }
+        }
+
+        this.logger.warn(`No transcript or recording found on Graph API for meeting ${id}`);
+      } catch (error: any) {
+        this.logger.error(`Graph API fetch failed for meeting ${id}: ${error.message}`);
+      }
+    }
+
+    // ── Option 3: Process from stored recording ──
     if (meeting.recordingStorageKey) {
       const recordingBuffer = await this.storageProvider.download(meeting.recordingStorageKey);
       return this.processWithRecording(id, recordingBuffer);
@@ -285,8 +315,42 @@ export class MeetingsService {
 
     throw new BadRequestException(
       'No transcript or recording available for this meeting. ' +
-      'Try triggering a sync first (GET /api/meetings/sync) to fetch transcripts from Teams.',
+      'Make sure transcription is enabled in Teams settings, then try syncing again.',
     );
+  }
+
+  /**
+   * Run AI analysis on transcript text and save the summary.
+   */
+  private async runAiAnalysis(
+    meetingId: string,
+    fullText: string,
+    transcriptId: string,
+    subject: string,
+  ): Promise<MeetingDocument> {
+    await this.updateStatus(meetingId, MeetingStatus.ANALYZING);
+
+    const startTime = Date.now();
+    const analysis = await this.aiProvider.analyzeTranscript(fullText, subject);
+    const processingTimeMs = Date.now() - startTime;
+
+    const summary = await this.summariesService.create({
+      meetingId,
+      transcriptId,
+      summary: analysis.summary,
+      keyPoints: analysis.keyPoints,
+      actionItems: analysis.actionItems,
+      decisions: analysis.decisions,
+      sentiment: analysis.sentiment,
+      topics: analysis.topics,
+      processingTimeMs,
+    });
+
+    await this.meetingModel.findByIdAndUpdate(meetingId, { summaryId: summary._id });
+    await this.updateStatus(meetingId, MeetingStatus.COMPLETED);
+
+    this.logger.log(`Meeting ${meetingId} AI analysis completed in ${processingTimeMs}ms`);
+    return await this.findOne(meetingId);
   }
 
   /**

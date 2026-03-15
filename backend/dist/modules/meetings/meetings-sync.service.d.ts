@@ -15,7 +15,9 @@ export declare class MeetingSyncService {
     constructor(meetingModel: Model<MeetingDocument>, graphService: GraphService, meetingsService: MeetingsService, configService: ConfigService);
     setAccessToken(token: string, expiresAt: Date): void;
     getIsAuthenticated(): boolean;
+    getAccessToken(): string | null;
     syncMeetings(): Promise<void>;
+    private extractJoinUrlFromBody;
     private processCalendarEvent;
     private resolveOnlineMeetingId;
     private tryFetchTranscript;

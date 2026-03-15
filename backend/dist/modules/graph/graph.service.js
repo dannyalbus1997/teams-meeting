@@ -40,30 +40,42 @@ let GraphService = GraphService_1 = class GraphService {
                 params: {
                     startDateTime: startDate.toISOString(),
                     endDateTime: endDate.toISOString(),
-                    $select: 'id,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeetingUrl,onlineMeeting',
+                    $select: 'id,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,body',
                     $top: 100,
                 },
             });
             const onlineMeetings = (response.data.value || []).filter((event) => event.isOnlineMeeting === true);
-            return onlineMeetings.map((event) => ({
-                id: event.id,
-                subject: event.subject || '(No subject)',
-                start: new Date(event.start.dateTime + 'Z'),
-                end: new Date(event.end.dateTime + 'Z'),
-                organizer: event.organizer?.emailAddress
-                    ? {
-                        displayName: event.organizer.emailAddress.name,
-                        emailAddress: event.organizer.emailAddress.address,
-                    }
-                    : undefined,
-                attendees: (event.attendees || []).map((att) => ({
-                    displayName: att.emailAddress?.name,
-                    emailAddress: att.emailAddress?.address,
-                })),
-                isOnlineMeeting: true,
-                onlineMeetingUrl: event.onlineMeetingUrl,
-                onlineMeetingId: event.onlineMeeting?.joinMeetingIdSettings?.joinMeetingId,
-            }));
+            return onlineMeetings.map((event) => {
+                const joinUrl = event.onlineMeetingUrl ||
+                    event.onlineMeeting?.joinUrl ||
+                    event.onlineMeeting?.joinWebUrl ||
+                    '';
+                if (!joinUrl) {
+                    this.logger.warn(`Meeting "${event.subject}" has no join URL. Available fields: ` +
+                        `onlineMeetingUrl=${event.onlineMeetingUrl}, ` +
+                        `onlineMeeting=${JSON.stringify(event.onlineMeeting || {})}`);
+                }
+                return {
+                    id: event.id,
+                    subject: event.subject || '(No subject)',
+                    start: new Date(event.start.dateTime + 'Z'),
+                    end: new Date(event.end.dateTime + 'Z'),
+                    organizer: event.organizer?.emailAddress
+                        ? {
+                            displayName: event.organizer.emailAddress.name,
+                            emailAddress: event.organizer.emailAddress.address,
+                        }
+                        : undefined,
+                    attendees: (event.attendees || []).map((att) => ({
+                        displayName: att.emailAddress?.name,
+                        emailAddress: att.emailAddress?.address,
+                    })),
+                    isOnlineMeeting: true,
+                    onlineMeetingUrl: joinUrl,
+                    onlineMeetingId: event.onlineMeeting?.joinMeetingIdSettings?.joinMeetingId,
+                    bodyContent: event.body?.content || '',
+                };
+            });
         }
         catch (error) {
             this.handleGraphError(error, 'Failed to fetch calendar events');

@@ -21,14 +21,16 @@ const meeting_schema_1 = require("./schemas/meeting.schema");
 const interfaces_1 = require("../../common/interfaces");
 const transcripts_service_1 = require("../transcripts/transcripts.service");
 const summaries_service_1 = require("../summaries/summaries.service");
+const graph_service_1 = require("../graph/graph.service");
 let MeetingsService = MeetingsService_1 = class MeetingsService {
-    constructor(meetingModel, speechProvider, aiProvider, storageProvider, transcriptsService, summariesService) {
+    constructor(meetingModel, speechProvider, aiProvider, storageProvider, transcriptsService, summariesService, graphService) {
         this.meetingModel = meetingModel;
         this.speechProvider = speechProvider;
         this.aiProvider = aiProvider;
         this.storageProvider = storageProvider;
         this.transcriptsService = transcriptsService;
         this.summariesService = summariesService;
+        this.graphService = graphService;
         this.logger = new common_1.Logger(MeetingsService_1.name);
     }
     async create(createMeetingDto) {
@@ -177,36 +179,47 @@ let MeetingsService = MeetingsService_1 = class MeetingsService {
             throw new common_1.InternalServerErrorException(`Failed to process recording: ${errorMsg}`);
         }
     }
-    async processMeeting(id) {
+    async processMeeting(id, accessToken) {
         const meeting = await this.findOne(id);
         if (meeting.transcriptId) {
             try {
                 const existingTranscript = await this.transcriptsService.findOne(meeting.transcriptId.toString());
                 if (existingTranscript && existingTranscript.fullText) {
                     this.logger.log(`Processing meeting ${id} using existing transcript`);
-                    await this.updateStatus(id, meeting_schema_1.MeetingStatus.ANALYZING);
-                    const startTime = Date.now();
-                    const analysis = await this.aiProvider.analyzeTranscript(existingTranscript.fullText, meeting.subject);
-                    const processingTimeMs = Date.now() - startTime;
-                    const summary = await this.summariesService.create({
-                        meetingId: id,
-                        transcriptId: existingTranscript._id.toString(),
-                        summary: analysis.summary,
-                        keyPoints: analysis.keyPoints,
-                        actionItems: analysis.actionItems,
-                        decisions: analysis.decisions,
-                        sentiment: analysis.sentiment,
-                        topics: analysis.topics,
-                        processingTimeMs,
-                    });
-                    await this.meetingModel.findByIdAndUpdate(id, { summaryId: summary._id });
-                    await this.updateStatus(id, meeting_schema_1.MeetingStatus.COMPLETED);
-                    this.logger.log(`Meeting ${id} processed from existing transcript in ${processingTimeMs}ms`);
-                    return await this.findOne(id);
+                    return this.runAiAnalysis(id, existingTranscript.fullText, existingTranscript._id.toString(), meeting.subject);
                 }
             }
             catch (error) {
                 this.logger.warn(`Failed to use existing transcript for ${id}: ${error.message}`);
+            }
+        }
+        if (accessToken && meeting.joinUrl) {
+            this.logger.log(`Trying to fetch transcript from Graph API for meeting ${id}...`);
+            try {
+                const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(accessToken, meeting.joinUrl);
+                if (onlineMeeting) {
+                    const transcripts = await this.graphService.listMeetingTranscripts(accessToken, onlineMeeting.meetingId);
+                    if (transcripts.length > 0) {
+                        const latestTranscript = transcripts[transcripts.length - 1];
+                        const vttContent = await this.graphService.getTranscriptContent(accessToken, onlineMeeting.meetingId, latestTranscript.id, 'text/vtt');
+                        const parsed = this.graphService.parseVttTranscript(vttContent);
+                        if (parsed.fullText.length > 0) {
+                            this.logger.log(`Fetched transcript from Graph API (${parsed.segments.length} segments)`);
+                            return this.processWithTranscriptText(id, parsed.fullText, parsed.segments, 'teams-native');
+                        }
+                    }
+                    const recordings = await this.graphService.listMeetingRecordings(accessToken, onlineMeeting.meetingId);
+                    if (recordings.length > 0) {
+                        const latestRecording = recordings[recordings.length - 1];
+                        const audioBuffer = await this.graphService.getRecordingContent(accessToken, onlineMeeting.meetingId, latestRecording.id);
+                        this.logger.log(`Fetched recording from Graph API, processing...`);
+                        return this.processWithRecording(id, audioBuffer);
+                    }
+                }
+                this.logger.warn(`No transcript or recording found on Graph API for meeting ${id}`);
+            }
+            catch (error) {
+                this.logger.error(`Graph API fetch failed for meeting ${id}: ${error.message}`);
             }
         }
         if (meeting.recordingStorageKey) {
@@ -214,7 +227,28 @@ let MeetingsService = MeetingsService_1 = class MeetingsService {
             return this.processWithRecording(id, recordingBuffer);
         }
         throw new common_1.BadRequestException('No transcript or recording available for this meeting. ' +
-            'Try triggering a sync first (GET /api/meetings/sync) to fetch transcripts from Teams.');
+            'Make sure transcription is enabled in Teams settings, then try syncing again.');
+    }
+    async runAiAnalysis(meetingId, fullText, transcriptId, subject) {
+        await this.updateStatus(meetingId, meeting_schema_1.MeetingStatus.ANALYZING);
+        const startTime = Date.now();
+        const analysis = await this.aiProvider.analyzeTranscript(fullText, subject);
+        const processingTimeMs = Date.now() - startTime;
+        const summary = await this.summariesService.create({
+            meetingId,
+            transcriptId,
+            summary: analysis.summary,
+            keyPoints: analysis.keyPoints,
+            actionItems: analysis.actionItems,
+            decisions: analysis.decisions,
+            sentiment: analysis.sentiment,
+            topics: analysis.topics,
+            processingTimeMs,
+        });
+        await this.meetingModel.findByIdAndUpdate(meetingId, { summaryId: summary._id });
+        await this.updateStatus(meetingId, meeting_schema_1.MeetingStatus.COMPLETED);
+        this.logger.log(`Meeting ${meetingId} AI analysis completed in ${processingTimeMs}ms`);
+        return await this.findOne(meetingId);
     }
     async getStats() {
         const [total, completed, failed, processing] = await Promise.all([
@@ -285,6 +319,7 @@ exports.MeetingsService = MeetingsService = MeetingsService_1 = __decorate([
     __param(2, (0, common_1.Inject)(interfaces_1.AI_PROVIDER)),
     __param(3, (0, common_1.Inject)(interfaces_1.STORAGE_PROVIDER)),
     __metadata("design:paramtypes", [mongoose_2.Model, Object, Object, Object, transcripts_service_1.TranscriptsService,
-        summaries_service_1.SummariesService])
+        summaries_service_1.SummariesService,
+        graph_service_1.GraphService])
 ], MeetingsService);
 //# sourceMappingURL=meetings.service.js.map

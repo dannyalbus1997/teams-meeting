@@ -16,6 +16,9 @@ import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/
 import { Request, Response } from 'express';
 import { MeetingsService } from './meetings.service';
 import { MeetingSyncService } from './meetings-sync.service';
+import { TranscriptsService } from '../transcripts/transcripts.service';
+import { SummariesService } from '../summaries/summaries.service';
+import { GraphService } from '../graph/graph.service';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 import { UpdateMeetingDto } from './dto/update-meeting.dto';
 import { QueryMeetingsDto } from './dto/query-meetings.dto';
@@ -29,6 +32,9 @@ export class MeetingsController {
   constructor(
     private readonly meetingsService: MeetingsService,
     private readonly meetingSyncService: MeetingSyncService,
+    private readonly transcriptsService: TranscriptsService,
+    private readonly summariesService: SummariesService,
+    private readonly graphService: GraphService,
   ) {}
 
   // ──────────────────────────────────────────────
@@ -133,6 +139,100 @@ export class MeetingsController {
     return this.meetingsService.findAll(query);
   }
 
+  @Get(':id/diagnose')
+  @ApiOperation({ summary: 'Debug: diagnose why transcript/recording fetch fails for a meeting' })
+  @ApiParam({ name: 'id', description: 'Meeting ID' })
+  async diagnoseMeeting(@Param('id') id: string) {
+    const meeting = await this.meetingsService.findOne(id);
+    const accessToken = this.meetingSyncService.getAccessToken();
+    const results: any = {
+      meetingId: id,
+      subject: meeting.subject,
+      status: meeting.status,
+      joinUrl: meeting.joinUrl || '(none)',
+      hasTranscriptInDb: !!meeting.transcriptId,
+      hasSummaryInDb: !!meeting.summaryId,
+      hasRecordingKey: !!meeting.recordingStorageKey,
+      isAuthenticated: this.meetingSyncService.getIsAuthenticated(),
+      steps: [],
+    };
+
+    if (!accessToken) {
+      results.steps.push({ step: 'auth', result: 'FAIL — no access token. Login at /api/auth/login first.' });
+      return results;
+    }
+    results.steps.push({ step: 'auth', result: 'OK — access token available' });
+
+    if (!meeting.joinUrl) {
+      results.steps.push({ step: 'joinUrl', result: 'FAIL — meeting has no joinUrl stored. Cannot resolve online meeting.' });
+      return results;
+    }
+    results.steps.push({ step: 'joinUrl', result: `OK — ${meeting.joinUrl.substring(0, 80)}...` });
+
+    try {
+      const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(accessToken, meeting.joinUrl);
+      if (!onlineMeeting) {
+        results.steps.push({ step: 'resolveOnlineMeeting', result: 'FAIL — could not resolve online meeting from joinUrl. Check OnlineMeetings.Read permission.' });
+        return results;
+      }
+      results.onlineMeetingId = onlineMeeting.meetingId;
+      results.steps.push({ step: 'resolveOnlineMeeting', result: `OK — resolved to ${onlineMeeting.meetingId}` });
+
+      // Check transcripts
+      const transcripts = await this.graphService.listMeetingTranscripts(accessToken, onlineMeeting.meetingId);
+      results.transcriptsFound = transcripts.length;
+      if (transcripts.length === 0) {
+        results.steps.push({ step: 'listTranscripts', result: 'FAIL — no transcripts found. Was "Start transcription" clicked during the meeting? Also needs OnlineMeetingTranscript.Read.All permission.' });
+      } else {
+        results.steps.push({ step: 'listTranscripts', result: `OK — found ${transcripts.length} transcript(s)` });
+
+        try {
+          const vtt = await this.graphService.getTranscriptContent(accessToken, onlineMeeting.meetingId, transcripts[0].id, 'text/vtt');
+          const parsed = this.graphService.parseVttTranscript(vtt);
+          results.steps.push({ step: 'fetchTranscriptContent', result: `OK — ${parsed.segments.length} segments, ${parsed.fullText.length} chars` });
+          results.transcriptPreview = parsed.fullText.substring(0, 500);
+        } catch (err: any) {
+          results.steps.push({ step: 'fetchTranscriptContent', result: `FAIL — ${err.message}` });
+        }
+      }
+
+      // Check recordings
+      const recordings = await this.graphService.listMeetingRecordings(accessToken, onlineMeeting.meetingId);
+      results.recordingsFound = recordings.length;
+      if (recordings.length === 0) {
+        results.steps.push({ step: 'listRecordings', result: 'No recordings found.' });
+      } else {
+        results.steps.push({ step: 'listRecordings', result: `OK — found ${recordings.length} recording(s)` });
+      }
+    } catch (err: any) {
+      results.steps.push({ step: 'graphApiCall', result: `FAIL — ${err.message}` });
+    }
+
+    return results;
+  }
+
+  @Get(':id/transcript')
+  @ApiOperation({ summary: 'Get transcript for a specific meeting' })
+  @ApiParam({ name: 'id', description: 'Meeting ID' })
+  async getTranscript(@Param('id') id: string) {
+    const transcripts = await this.transcriptsService.findByMeetingId(id);
+    if (transcripts.length === 0) {
+      return null;
+    }
+    return transcripts[transcripts.length - 1]; // Return the latest transcript
+  }
+
+  @Get(':id/summary')
+  @ApiOperation({ summary: 'Get AI summary for a specific meeting' })
+  @ApiParam({ name: 'id', description: 'Meeting ID' })
+  async getSummary(@Param('id') id: string) {
+    const summaries = await this.summariesService.findByMeetingId(id);
+    if (summaries.length === 0) {
+      return null;
+    }
+    return summaries[summaries.length - 1]; // Return the latest summary
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get a specific meeting by ID' })
   @ApiParam({ name: 'id', description: 'Meeting ID' })
@@ -152,7 +252,9 @@ export class MeetingsController {
   @ApiOperation({ summary: 'Trigger meeting processing (transcription + summarization)' })
   @ApiParam({ name: 'id', description: 'Meeting ID' })
   async processMeeting(@Param('id') id: string) {
-    return this.meetingsService.processMeeting(id);
+    // Pass the access token so processMeeting can fetch from Graph API if needed
+    const accessToken = this.meetingSyncService.getAccessToken();
+    return this.meetingsService.processMeeting(id, accessToken || undefined);
   }
 
   @Get(':id/status')

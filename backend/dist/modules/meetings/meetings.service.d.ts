@@ -6,6 +6,7 @@ import { MeetingDocument, MeetingStatus } from './schemas/meeting.schema';
 import { SpeechProvider, AiProvider, StorageProvider } from '../../common/interfaces';
 import { TranscriptsService } from '../transcripts/transcripts.service';
 import { SummariesService } from '../summaries/summaries.service';
+import { GraphService } from '../graph/graph.service';
 export declare class MeetingsService {
     private meetingModel;
     private speechProvider;
@@ -13,8 +14,9 @@ export declare class MeetingsService {
     private storageProvider;
     private transcriptsService;
     private summariesService;
+    private graphService;
     private readonly logger;
-    constructor(meetingModel: Model<MeetingDocument>, speechProvider: SpeechProvider, aiProvider: AiProvider, storageProvider: StorageProvider, transcriptsService: TranscriptsService, summariesService: SummariesService);
+    constructor(meetingModel: Model<MeetingDocument>, speechProvider: SpeechProvider, aiProvider: AiProvider, storageProvider: StorageProvider, transcriptsService: TranscriptsService, summariesService: SummariesService, graphService: GraphService);
     create(createMeetingDto: CreateMeetingDto): Promise<MeetingDocument>;
     findAll(query: QueryMeetingsDto): Promise<{
         data: MeetingDocument[];
@@ -33,7 +35,8 @@ export declare class MeetingsService {
         speaker?: string;
     }>, source?: string): Promise<MeetingDocument>;
     processWithRecording(id: string, audioBuffer: Buffer): Promise<MeetingDocument>;
-    processMeeting(id: string): Promise<MeetingDocument>;
+    processMeeting(id: string, accessToken?: string): Promise<MeetingDocument>;
+    private runAiAnalysis;
     getStats(): Promise<{
         total: number;
         completed: number;

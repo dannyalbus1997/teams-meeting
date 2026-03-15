@@ -18,14 +18,20 @@ const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const meetings_service_1 = require("./meetings.service");
 const meetings_sync_service_1 = require("./meetings-sync.service");
+const transcripts_service_1 = require("../transcripts/transcripts.service");
+const summaries_service_1 = require("../summaries/summaries.service");
+const graph_service_1 = require("../graph/graph.service");
 const create_meeting_dto_1 = require("./dto/create-meeting.dto");
 const update_meeting_dto_1 = require("./dto/update-meeting.dto");
 const query_meetings_dto_1 = require("./dto/query-meetings.dto");
 const meeting_schema_1 = require("./schemas/meeting.schema");
 let MeetingsController = MeetingsController_1 = class MeetingsController {
-    constructor(meetingsService, meetingSyncService) {
+    constructor(meetingsService, meetingSyncService, transcriptsService, summariesService, graphService) {
         this.meetingsService = meetingsService;
         this.meetingSyncService = meetingSyncService;
+        this.transcriptsService = transcriptsService;
+        this.summariesService = summariesService;
+        this.graphService = graphService;
         this.logger = new common_1.Logger(MeetingsController_1.name);
     }
     async syncMeetingsGet() {
@@ -75,6 +81,83 @@ let MeetingsController = MeetingsController_1 = class MeetingsController {
     async findAll(query) {
         return this.meetingsService.findAll(query);
     }
+    async diagnoseMeeting(id) {
+        const meeting = await this.meetingsService.findOne(id);
+        const accessToken = this.meetingSyncService.getAccessToken();
+        const results = {
+            meetingId: id,
+            subject: meeting.subject,
+            status: meeting.status,
+            joinUrl: meeting.joinUrl || '(none)',
+            hasTranscriptInDb: !!meeting.transcriptId,
+            hasSummaryInDb: !!meeting.summaryId,
+            hasRecordingKey: !!meeting.recordingStorageKey,
+            isAuthenticated: this.meetingSyncService.getIsAuthenticated(),
+            steps: [],
+        };
+        if (!accessToken) {
+            results.steps.push({ step: 'auth', result: 'FAIL — no access token. Login at /api/auth/login first.' });
+            return results;
+        }
+        results.steps.push({ step: 'auth', result: 'OK — access token available' });
+        if (!meeting.joinUrl) {
+            results.steps.push({ step: 'joinUrl', result: 'FAIL — meeting has no joinUrl stored. Cannot resolve online meeting.' });
+            return results;
+        }
+        results.steps.push({ step: 'joinUrl', result: `OK — ${meeting.joinUrl.substring(0, 80)}...` });
+        try {
+            const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(accessToken, meeting.joinUrl);
+            if (!onlineMeeting) {
+                results.steps.push({ step: 'resolveOnlineMeeting', result: 'FAIL — could not resolve online meeting from joinUrl. Check OnlineMeetings.Read permission.' });
+                return results;
+            }
+            results.onlineMeetingId = onlineMeeting.meetingId;
+            results.steps.push({ step: 'resolveOnlineMeeting', result: `OK — resolved to ${onlineMeeting.meetingId}` });
+            const transcripts = await this.graphService.listMeetingTranscripts(accessToken, onlineMeeting.meetingId);
+            results.transcriptsFound = transcripts.length;
+            if (transcripts.length === 0) {
+                results.steps.push({ step: 'listTranscripts', result: 'FAIL — no transcripts found. Was "Start transcription" clicked during the meeting? Also needs OnlineMeetingTranscript.Read.All permission.' });
+            }
+            else {
+                results.steps.push({ step: 'listTranscripts', result: `OK — found ${transcripts.length} transcript(s)` });
+                try {
+                    const vtt = await this.graphService.getTranscriptContent(accessToken, onlineMeeting.meetingId, transcripts[0].id, 'text/vtt');
+                    const parsed = this.graphService.parseVttTranscript(vtt);
+                    results.steps.push({ step: 'fetchTranscriptContent', result: `OK — ${parsed.segments.length} segments, ${parsed.fullText.length} chars` });
+                    results.transcriptPreview = parsed.fullText.substring(0, 500);
+                }
+                catch (err) {
+                    results.steps.push({ step: 'fetchTranscriptContent', result: `FAIL — ${err.message}` });
+                }
+            }
+            const recordings = await this.graphService.listMeetingRecordings(accessToken, onlineMeeting.meetingId);
+            results.recordingsFound = recordings.length;
+            if (recordings.length === 0) {
+                results.steps.push({ step: 'listRecordings', result: 'No recordings found.' });
+            }
+            else {
+                results.steps.push({ step: 'listRecordings', result: `OK — found ${recordings.length} recording(s)` });
+            }
+        }
+        catch (err) {
+            results.steps.push({ step: 'graphApiCall', result: `FAIL — ${err.message}` });
+        }
+        return results;
+    }
+    async getTranscript(id) {
+        const transcripts = await this.transcriptsService.findByMeetingId(id);
+        if (transcripts.length === 0) {
+            return null;
+        }
+        return transcripts[transcripts.length - 1];
+    }
+    async getSummary(id) {
+        const summaries = await this.summariesService.findByMeetingId(id);
+        if (summaries.length === 0) {
+            return null;
+        }
+        return summaries[summaries.length - 1];
+    }
     async findOne(id) {
         return this.meetingsService.findOne(id);
     }
@@ -82,7 +165,8 @@ let MeetingsController = MeetingsController_1 = class MeetingsController {
         return this.meetingsService.update(id, updateMeetingDto);
     }
     async processMeeting(id) {
-        return this.meetingsService.processMeeting(id);
+        const accessToken = this.meetingSyncService.getAccessToken();
+        return this.meetingsService.processMeeting(id, accessToken || undefined);
     }
     async getStatus(id) {
         const meeting = await this.meetingsService.findOne(id);
@@ -162,6 +246,33 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], MeetingsController.prototype, "findAll", null);
 __decorate([
+    (0, common_1.Get)(':id/diagnose'),
+    (0, swagger_1.ApiOperation)({ summary: 'Debug: diagnose why transcript/recording fetch fails for a meeting' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Meeting ID' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], MeetingsController.prototype, "diagnoseMeeting", null);
+__decorate([
+    (0, common_1.Get)(':id/transcript'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get transcript for a specific meeting' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Meeting ID' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], MeetingsController.prototype, "getTranscript", null);
+__decorate([
+    (0, common_1.Get)(':id/summary'),
+    (0, swagger_1.ApiOperation)({ summary: 'Get AI summary for a specific meeting' }),
+    (0, swagger_1.ApiParam)({ name: 'id', description: 'Meeting ID' }),
+    __param(0, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], MeetingsController.prototype, "getSummary", null);
+__decorate([
     (0, common_1.Get)(':id'),
     (0, swagger_1.ApiOperation)({ summary: 'Get a specific meeting by ID' }),
     (0, swagger_1.ApiParam)({ name: 'id', description: 'Meeting ID' }),
@@ -203,6 +314,9 @@ exports.MeetingsController = MeetingsController = MeetingsController_1 = __decor
     (0, swagger_1.ApiTags)('meetings'),
     (0, common_1.Controller)('meetings'),
     __metadata("design:paramtypes", [meetings_service_1.MeetingsService,
-        meetings_sync_service_1.MeetingSyncService])
+        meetings_sync_service_1.MeetingSyncService,
+        transcripts_service_1.TranscriptsService,
+        summaries_service_1.SummariesService,
+        graph_service_1.GraphService])
 ], MeetingsController);
 //# sourceMappingURL=meetings.controller.js.map

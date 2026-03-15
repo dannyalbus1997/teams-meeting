@@ -41,6 +41,12 @@ let MeetingSyncService = MeetingSyncService_1 = class MeetingSyncService {
     getIsAuthenticated() {
         return !!this.accessToken && !!this.tokenExpiresAt && this.tokenExpiresAt > new Date();
     }
+    getAccessToken() {
+        if (this.getIsAuthenticated()) {
+            return this.accessToken;
+        }
+        return null;
+    }
     async syncMeetings() {
         if (!this.getIsAuthenticated()) {
             return;
@@ -59,6 +65,12 @@ let MeetingSyncService = MeetingSyncService_1 = class MeetingSyncService {
             this.logger.error(`Meeting sync failed: ${error.message}`);
         }
     }
+    extractJoinUrlFromBody(bodyContent) {
+        if (!bodyContent)
+            return '';
+        const match = bodyContent.match(/https:\/\/teams\.microsoft\.com\/l\/meetup-join\/[^\s"<]+/);
+        return match ? match[0].replace(/&amp;/g, '&') : '';
+    }
     async processCalendarEvent(event) {
         try {
             const existing = await this.meetingModel
@@ -66,6 +78,13 @@ let MeetingSyncService = MeetingSyncService_1 = class MeetingSyncService {
                 .exec();
             if (existing && existing.status === meeting_schema_1.MeetingStatus.COMPLETED) {
                 return;
+            }
+            let joinUrl = event.onlineMeetingUrl || '';
+            if (!joinUrl && event.bodyContent) {
+                joinUrl = this.extractJoinUrlFromBody(event.bodyContent);
+                if (joinUrl) {
+                    this.logger.log(`Extracted join URL from meeting body for "${event.subject}"`);
+                }
             }
             const now = new Date();
             const meetingStartTime = new Date(event.start);
@@ -80,7 +99,7 @@ let MeetingSyncService = MeetingSyncService_1 = class MeetingSyncService {
                     participants: (event.attendees || []).map((a) => a.displayName || a.emailAddress),
                     startTime: event.start,
                     endTime: event.end,
-                    joinUrl: event.onlineMeetingUrl || '',
+                    joinUrl,
                 });
                 this.logger.log(`New meeting detected: "${event.subject}" (${meeting._id}) — ${isLive ? 'LIVE NOW' : hasEnded ? 'ENDED' : 'UPCOMING'}`);
                 if (isLive) {
@@ -92,6 +111,10 @@ let MeetingSyncService = MeetingSyncService_1 = class MeetingSyncService {
                 }
             }
             else {
+                if (!existing.joinUrl && joinUrl) {
+                    await this.meetingModel.findByIdAndUpdate(existing._id, { joinUrl });
+                    this.logger.log(`Backfilled joinUrl for existing meeting "${event.subject}"`);
+                }
                 if (isLive && existing.status === meeting_schema_1.MeetingStatus.DETECTED) {
                     await this.meetingsService.updateStatus(existing._id.toString(), meeting_schema_1.MeetingStatus.LIVE);
                 }

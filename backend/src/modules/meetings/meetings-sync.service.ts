@@ -34,6 +34,13 @@ export class MeetingSyncService {
     return !!this.accessToken && !!this.tokenExpiresAt && this.tokenExpiresAt > new Date();
   }
 
+  getAccessToken(): string | null {
+    if (this.getIsAuthenticated()) {
+      return this.accessToken;
+    }
+    return null;
+  }
+
   @Cron(CronExpression.EVERY_MINUTE)
   async syncMeetings() {
     if (!this.getIsAuthenticated()) {
@@ -62,6 +69,16 @@ export class MeetingSyncService {
     }
   }
 
+  /**
+   * Extract a Teams join URL from the meeting body HTML as a last resort.
+   */
+  private extractJoinUrlFromBody(bodyContent: string): string {
+    if (!bodyContent) return '';
+    // Look for Teams join link in the HTML body
+    const match = bodyContent.match(/https:\/\/teams\.microsoft\.com\/l\/meetup-join\/[^\s"<]+/);
+    return match ? match[0].replace(/&amp;/g, '&') : '';
+  }
+
   private async processCalendarEvent(event: any) {
     try {
       const existing = await this.meetingModel
@@ -70,6 +87,15 @@ export class MeetingSyncService {
 
       if (existing && existing.status === MeetingStatus.COMPLETED) {
         return;
+      }
+
+      // Resolve join URL from multiple sources
+      let joinUrl = event.onlineMeetingUrl || '';
+      if (!joinUrl && event.bodyContent) {
+        joinUrl = this.extractJoinUrlFromBody(event.bodyContent);
+        if (joinUrl) {
+          this.logger.log(`Extracted join URL from meeting body for "${event.subject}"`);
+        }
       }
 
       const now = new Date();
@@ -88,7 +114,7 @@ export class MeetingSyncService {
           ),
           startTime: event.start,
           endTime: event.end,
-          joinUrl: event.onlineMeetingUrl || '',
+          joinUrl,
         });
 
         this.logger.log(
@@ -102,6 +128,12 @@ export class MeetingSyncService {
           await this.tryFetchTranscript(meeting, event, false);
         }
       } else {
+        // Backfill joinUrl if missing on existing meeting
+        if (!existing.joinUrl && joinUrl) {
+          await this.meetingModel.findByIdAndUpdate(existing._id, { joinUrl });
+          this.logger.log(`Backfilled joinUrl for existing meeting "${event.subject}"`);
+        }
+
         // Update to LIVE if currently happening
         if (isLive && existing.status === MeetingStatus.DETECTED) {
           await this.meetingsService.updateStatus(existing._id.toString(), MeetingStatus.LIVE);
