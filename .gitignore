@@ -1,43 +1,81 @@
 # Dependencies
- backend/ node_modules/
-frontend/ node_modules/
+node_modules/
 
-# Environment (keep .env.example)
+# Environment – never commit secrets (keep .env.example)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
 backend/.env
 frontend/.env
 
 # Build outputs
 dist/
+backend/dist/
 build/
 .next/
 out/
+*.tsbuildinfo
 
 # Logs and debug
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+lerna-debug.log*
 
-# IDE and OS
+# Testing and coverage
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+
+# Local storage / uploads
+uploads/
+backend/uploads/
+frontend/public/uploads/
+
+# IDE and editors
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+.sublime-project
+.sublime-workspace
+*.sublime-*
+
+# OS
 .DS_Store
+.DS_Store?
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# Testing and coverage
-coverage/
-.nyc_output/
+# Package manager
+.npm
+.yarn/
+.pnp
+.pnp.js
+.pnp.cjs
+.yarnrc.yml
+node_modules/.cache/
 
-# Local storage / uploads (backend)
-uploads/
-backend/uploads/
+# Deployment / hosting
+.vercel
+.netlify
+*.pem
 
 # Misc
-*.tsbuildinfo
 .turbo
-.vercel
-*.pem
+.cache/
+*.local
+*.bak
+*.tmp
+*.temp
+.temp/
+tmp/
+temp/
