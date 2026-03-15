@@ -10,6 +10,10 @@ export declare class MeetingsController {
     private readonly meetingSyncService;
     private readonly logger;
     constructor(meetingsService: MeetingsService, meetingSyncService: MeetingSyncService);
+    syncMeetingsGet(): Promise<{
+        synced: number;
+        message: string;
+    }>;
     syncMeetings(): Promise<{
         synced: number;
         message: string;

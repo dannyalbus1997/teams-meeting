@@ -41,11 +41,11 @@ let GraphService = GraphService_1 = class GraphService {
                     startDateTime: startDate.toISOString(),
                     endDateTime: endDate.toISOString(),
                     $select: 'id,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeetingUrl,onlineMeeting',
-                    $filter: 'isOnlineMeeting eq true',
                     $top: 100,
                 },
             });
-            return (response.data.value || []).map((event) => ({
+            const onlineMeetings = (response.data.value || []).filter((event) => event.isOnlineMeeting === true);
+            return onlineMeetings.map((event) => ({
                 id: event.id,
                 subject: event.subject || '(No subject)',
                 start: new Date(event.start.dateTime + 'Z'),

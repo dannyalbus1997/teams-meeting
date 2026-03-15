@@ -11,11 +11,13 @@ export declare class MeetingSyncService {
     private readonly logger;
     private accessToken;
     private tokenExpiresAt;
+    private onlineMeetingIdCache;
     constructor(meetingModel: Model<MeetingDocument>, graphService: GraphService, meetingsService: MeetingsService, configService: ConfigService);
     setAccessToken(token: string, expiresAt: Date): void;
     getIsAuthenticated(): boolean;
     syncMeetings(): Promise<void>;
     private processCalendarEvent;
+    private resolveOnlineMeetingId;
     private tryFetchTranscript;
     syncNow(): Promise<{
         synced: number;

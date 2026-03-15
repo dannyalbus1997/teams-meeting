@@ -23,9 +23,6 @@ import {
   GetMeetingsParams,
 } from '@/types';
 
-/**
- * Query keys for React Query cache management
- */
 const meetingsKeys = {
   all: ['meetings'] as const,
   lists: () => [...meetingsKeys.all, 'list'] as const,
@@ -41,97 +38,68 @@ const meetingsKeys = {
     [...meetingsKeys.summaries(), meetingId] as const,
 };
 
-/**
- * Hook to fetch paginated meetings list
- */
 export const useMeetings = (
   params?: GetMeetingsParams
 ): UseQueryResult<PaginatedResponse<Meeting>> => {
   return useQuery({
     queryKey: meetingsKeys.list(params),
     queryFn: () => getMeetings(params),
-    staleTime: 1000 * 60 * 5, // 5 minutes
-    gcTime: 1000 * 60 * 10, // 10 minutes (formerly cacheTime)
-  });
-};
-
-/**
- * Hook to fetch a single meeting
- */
-export const useMeeting = (
-  id: string,
-  enabled = true
-): UseQueryResult<Meeting> => {
-  return useQuery({
-    queryKey: meetingsKeys.detail(id),
-    queryFn: () => getMeeting(id),
-    enabled,
     staleTime: 1000 * 60 * 5,
     gcTime: 1000 * 60 * 10,
   });
 };
 
-/**
- * Hook to fetch meeting transcript
- */
+export const useMeeting = (
+  id?: string,
+): UseQueryResult<Meeting> => {
+  return useQuery({
+    queryKey: meetingsKeys.detail(id || ''),
+    queryFn: () => getMeeting(id!),
+    enabled: !!id && id !== 'undefined',
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 10,
+  });
+};
+
 export const useMeetingTranscript = (
-  meetingId: string,
-  enabled = true
+  meetingId?: string,
 ): UseQueryResult<Transcript> => {
   return useQuery({
-    queryKey: meetingsKeys.transcript(meetingId),
-    queryFn: () => getMeetingTranscript(meetingId),
-    enabled,
+    queryKey: meetingsKeys.transcript(meetingId || ''),
+    queryFn: () => getMeetingTranscript(meetingId!),
+    enabled: !!meetingId && meetingId !== 'undefined',
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 15,
   });
 };
 
-/**
- * Hook to fetch meeting summary
- */
 export const useMeetingSummary = (
-  meetingId: string,
-  enabled = true
+  meetingId?: string,
 ): UseQueryResult<Summary> => {
   return useQuery({
-    queryKey: meetingsKeys.summary(meetingId),
-    queryFn: () => getMeetingSummary(meetingId),
-    enabled,
+    queryKey: meetingsKeys.summary(meetingId || ''),
+    queryFn: () => getMeetingSummary(meetingId!),
+    enabled: !!meetingId && meetingId !== 'undefined',
     staleTime: 1000 * 60 * 10,
     gcTime: 1000 * 60 * 15,
   });
 };
 
-/**
- * Mutation hook to trigger meeting processing
- */
 export const useProcessMeeting = (): UseMutationResult<Meeting, Error, string> => {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: (meetingId: string) => processMeeting(meetingId),
     onSuccess: (data) => {
-      // Invalidate and refetch affected queries
-      queryClient.invalidateQueries({
-        queryKey: meetingsKeys.detail(data.id),
-      });
-      queryClient.invalidateQueries({
-        queryKey: meetingsKeys.lists(),
-      });
-      queryClient.invalidateQueries({
-        queryKey: meetingsKeys.transcript(data.id),
-      });
-      queryClient.invalidateQueries({
-        queryKey: meetingsKeys.summary(data.id),
-      });
+      const id = data._id || data.id;
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.lists() });
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.transcript(id) });
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.summary(id) });
     },
   });
 };
 
-/**
- * Mutation hook to toggle action item completion status
- */
 export const useToggleActionItem = (): UseMutationResult<
   Summary,
   Error,
@@ -142,11 +110,8 @@ export const useToggleActionItem = (): UseMutationResult<
   return useMutation({
     mutationFn: ({ summaryId, actionItemIndex, completed }) =>
       toggleActionItem(summaryId, actionItemIndex, completed),
-    onSuccess: (data) => {
-      // Invalidate and refetch affected queries
-      queryClient.invalidateQueries({
-        queryKey: meetingsKeys.summaries(),
-      });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: meetingsKeys.summaries() });
     },
   });
 };

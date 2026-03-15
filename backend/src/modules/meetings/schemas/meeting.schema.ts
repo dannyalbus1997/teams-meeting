@@ -6,6 +6,7 @@ export type MeetingDocument = Meeting & Document;
 
 export enum MeetingStatus {
   DETECTED = 'detected',
+  LIVE = 'live',
   RECORDING_AVAILABLE = 'recording_available',
   TRANSCRIBING = 'transcribing',
   TRANSCRIBED = 'transcribed',

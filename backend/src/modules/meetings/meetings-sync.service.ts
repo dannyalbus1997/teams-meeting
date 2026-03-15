@@ -14,6 +14,9 @@ export class MeetingSyncService {
   private accessToken: string | null = null;
   private tokenExpiresAt: Date | null = null;
 
+  // Cache resolved online meeting IDs
+  private onlineMeetingIdCache: Map<string, string> = new Map();
+
   constructor(
     @InjectModel(Meeting.name) private meetingModel: Model<MeetingDocument>,
     private graphService: GraphService,
@@ -41,7 +44,7 @@ export class MeetingSyncService {
       this.logger.log('Starting meeting sync...');
 
       const startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const endDate = new Date(Date.now() + 60 * 60 * 1000);
+      const endDate = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
       const events = await this.graphService.getCalendarEvents(
         this.accessToken!,
@@ -69,8 +72,11 @@ export class MeetingSyncService {
         return;
       }
 
+      const now = new Date();
+      const meetingStartTime = new Date(event.start);
       const meetingEndTime = new Date(event.end);
-      const hasEnded = meetingEndTime < new Date();
+      const hasEnded = meetingEndTime < now;
+      const isLive = meetingStartTime <= now && meetingEndTime >= now;
 
       if (!existing) {
         const meeting = await this.meetingsService.create({
@@ -85,18 +91,36 @@ export class MeetingSyncService {
           joinUrl: event.onlineMeetingUrl || '',
         });
 
-        this.logger.log(`New meeting detected: "${event.subject}" (${meeting._id})`);
+        this.logger.log(
+          `New meeting detected: "${event.subject}" (${meeting._id}) — ${isLive ? 'LIVE NOW' : hasEnded ? 'ENDED' : 'UPCOMING'}`,
+        );
 
-        if (hasEnded) {
-          await this.tryFetchTranscript(meeting, event);
+        if (isLive) {
+          await this.meetingsService.updateStatus(meeting._id.toString(), MeetingStatus.LIVE);
+          await this.tryFetchTranscript(meeting, event, true);
+        } else if (hasEnded) {
+          await this.tryFetchTranscript(meeting, event, false);
         }
-      } else if (
-        hasEnded &&
-        [MeetingStatus.DETECTED, MeetingStatus.RECORDING_AVAILABLE].includes(
-          existing.status as MeetingStatus,
-        )
-      ) {
-        await this.tryFetchTranscript(existing, event);
+      } else {
+        // Update to LIVE if currently happening
+        if (isLive && existing.status === MeetingStatus.DETECTED) {
+          await this.meetingsService.updateStatus(existing._id.toString(), MeetingStatus.LIVE);
+        }
+
+        // Live meetings: fetch partial transcript every poll
+        if (isLive && [MeetingStatus.DETECTED, MeetingStatus.LIVE].includes(existing.status as MeetingStatus)) {
+          await this.tryFetchTranscript(existing, event, true);
+        }
+
+        // Ended meetings: full processing
+        if (
+          hasEnded &&
+          [MeetingStatus.DETECTED, MeetingStatus.LIVE, MeetingStatus.RECORDING_AVAILABLE].includes(
+            existing.status as MeetingStatus,
+          )
+        ) {
+          await this.tryFetchTranscript(existing, event, false);
+        }
       }
     } catch (error: any) {
       this.logger.warn(
@@ -105,7 +129,34 @@ export class MeetingSyncService {
     }
   }
 
-  private async tryFetchTranscript(meeting: MeetingDocument, event: any) {
+  private async resolveOnlineMeetingId(joinUrl: string): Promise<string | null> {
+    if (this.onlineMeetingIdCache.has(joinUrl)) {
+      return this.onlineMeetingIdCache.get(joinUrl)!;
+    }
+
+    const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(
+      this.accessToken!,
+      joinUrl,
+    );
+
+    if (onlineMeeting) {
+      this.onlineMeetingIdCache.set(joinUrl, onlineMeeting.meetingId);
+      return onlineMeeting.meetingId;
+    }
+
+    return null;
+  }
+
+  /**
+   * Fetch transcript for a meeting.
+   * isLive=true:  save partial transcript, no AI analysis yet
+   * isLive=false: save full transcript + run AI analysis + generate summary
+   */
+  private async tryFetchTranscript(
+    meeting: MeetingDocument,
+    event: any,
+    isLive: boolean,
+  ) {
     try {
       if (!event.onlineMeetingUrl) {
         this.logger.warn(`No join URL for meeting "${event.subject}"`);
@@ -113,31 +164,20 @@ export class MeetingSyncService {
       }
 
       const token = this.accessToken!;
+      const onlineMeetingId = await this.resolveOnlineMeetingId(event.onlineMeetingUrl);
 
-      // Resolve online meeting ID
-      const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(
-        token,
-        event.onlineMeetingUrl,
-      );
-
-      if (!onlineMeeting) {
+      if (!onlineMeetingId) {
         this.logger.warn(`Could not resolve online meeting ID for "${event.subject}"`);
         return;
       }
 
-      const onlineMeetingId = onlineMeeting.meetingId;
-
-      // Try native transcript first
+      // Try native transcript
       const transcripts = await this.graphService.listMeetingTranscripts(
         token,
         onlineMeetingId,
       );
 
       if (transcripts.length > 0) {
-        this.logger.log(
-          `Found ${transcripts.length} transcript(s) for "${event.subject}" — fetching...`,
-        );
-
         const latestTranscript = transcripts[transcripts.length - 1];
         const vttContent = await this.graphService.getTranscriptContent(
           token,
@@ -149,51 +189,66 @@ export class MeetingSyncService {
         const parsed = this.graphService.parseVttTranscript(vttContent);
 
         if (parsed.fullText.length > 0) {
-          await this.meetingsService.processWithTranscriptText(
-            meeting._id.toString(),
-            parsed.fullText,
-            parsed.segments,
-            'teams-native',
-          );
-
-          this.logger.log(`Meeting "${event.subject}" — transcript saved and AI analysis triggered`);
+          if (isLive) {
+            // Live: save/update partial transcript, no AI yet
+            await this.meetingsService.savePartialTranscript(
+              meeting._id.toString(),
+              parsed.fullText,
+              parsed.segments,
+              'teams-native-live',
+            );
+            this.logger.log(
+              `LIVE "${event.subject}" — partial transcript updated (${parsed.segments.length} segments)`,
+            );
+          } else {
+            // Ended: full processing
+            await this.meetingsService.processWithTranscriptText(
+              meeting._id.toString(),
+              parsed.fullText,
+              parsed.segments,
+              'teams-native',
+            );
+            this.logger.log(
+              `Meeting "${event.subject}" — transcript saved and AI analysis triggered`,
+            );
+          }
           return;
         }
       }
 
-      // Fallback: recording for Whisper
-      const recordings = await this.graphService.listMeetingRecordings(
-        token,
-        onlineMeetingId,
-      );
-
-      if (recordings.length > 0) {
-        this.logger.log(
-          `Found ${recordings.length} recording(s) for "${event.subject}" — downloading...`,
-        );
-
-        const latestRecording = recordings[recordings.length - 1];
-        const audioBuffer = await this.graphService.getRecordingContent(
+      // Fallback: recording (only for ended meetings)
+      if (!isLive) {
+        const recordings = await this.graphService.listMeetingRecordings(
           token,
           onlineMeetingId,
-          latestRecording.id,
         );
 
-        await this.meetingsService.processWithRecording(
-          meeting._id.toString(),
-          audioBuffer,
-        );
+        if (recordings.length > 0) {
+          const latestRecording = recordings[recordings.length - 1];
+          const audioBuffer = await this.graphService.getRecordingContent(
+            token,
+            onlineMeetingId,
+            latestRecording.id,
+          );
 
-        this.logger.log(`Meeting "${event.subject}" — recording downloaded, processing started`);
-        return;
+          await this.meetingsService.processWithRecording(
+            meeting._id.toString(),
+            audioBuffer,
+          );
+
+          this.logger.log(
+            `Meeting "${event.subject}" — recording downloaded, processing started`,
+          );
+          return;
+        }
       }
 
       this.logger.log(
-        `No transcripts or recordings available yet for "${event.subject}"`,
+        `No transcripts available yet for "${event.subject}"${isLive ? ' (live - will retry next poll)' : ''}`,
       );
     } catch (error: any) {
       this.logger.error(
-        `Failed to fetch transcript/recording for "${event.subject}": ${error.message}`,
+        `Failed to fetch transcript for "${event.subject}": ${error.message}`,
       );
     }
   }
@@ -203,8 +258,8 @@ export class MeetingSyncService {
       return { synced: 0, message: 'Not authenticated. Please login first at /api/auth/login' };
     }
 
-    const startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const endDate = new Date(Date.now() + 60 * 60 * 1000);
+    const startDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    const endDate = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
     const events = await this.graphService.getCalendarEvents(
       this.accessToken!,
@@ -218,7 +273,7 @@ export class MeetingSyncService {
 
     return {
       synced: events.length,
-      message: `Found ${events.length} online meeting(s) in the last 24 hours`,
+      message: `Found ${events.length} online meeting(s)`,
     };
   }
 }

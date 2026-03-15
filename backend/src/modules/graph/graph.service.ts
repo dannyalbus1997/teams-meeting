@@ -86,12 +86,16 @@ export class GraphService {
           endDateTime: endDate.toISOString(),
           $select:
             'id,subject,start,end,organizer,attendees,isOnlineMeeting,onlineMeetingUrl,onlineMeeting',
-          $filter: 'isOnlineMeeting eq true',
           $top: 100,
         },
       });
 
-      return (response.data.value || []).map((event: any) => ({
+      // Filter for online meetings on client side (Graph API doesn't support filtering by isOnlineMeeting)
+      const onlineMeetings = (response.data.value || []).filter(
+        (event: any) => event.isOnlineMeeting === true,
+      );
+
+      return onlineMeetings.map((event: any) => ({
         id: event.id,
         subject: event.subject || '(No subject)',
         start: new Date(event.start.dateTime + 'Z'),

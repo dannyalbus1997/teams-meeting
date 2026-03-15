@@ -28,6 +28,9 @@ let MeetingsController = MeetingsController_1 = class MeetingsController {
         this.meetingSyncService = meetingSyncService;
         this.logger = new common_1.Logger(MeetingsController_1.name);
     }
+    async syncMeetingsGet() {
+        return this.meetingSyncService.syncNow();
+    }
     async syncMeetings() {
         return this.meetingSyncService.syncNow();
     }
@@ -95,11 +98,17 @@ let MeetingsController = MeetingsController_1 = class MeetingsController {
 };
 exports.MeetingsController = MeetingsController;
 __decorate([
+    (0, common_1.Get)('sync'),
+    (0, swagger_1.ApiOperation)({ summary: 'Trigger meeting sync (GET for browser, also works as status check)' }),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], MeetingsController.prototype, "syncMeetingsGet", null);
+__decorate([
     (0, common_1.Post)('sync'),
     (0, common_1.HttpCode)(common_1.HttpStatus.OK),
     (0, swagger_1.ApiOperation)({
         summary: 'Manually trigger meeting sync from Microsoft Graph',
-        description: 'Fetches recent Teams meetings and processes any with available transcripts/recordings',
     }),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),

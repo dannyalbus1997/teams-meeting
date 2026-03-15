@@ -22,8 +22,20 @@ export function MeetingStatusChip({ status, ...props }: MeetingStatusChipProps) 
       label: 'Detected',
       color: 'default',
     },
+    [MeetingStatus.LIVE]: {
+      label: '🔴 Live',
+      color: 'error',
+    },
+    [MeetingStatus.RECORDING_AVAILABLE]: {
+      label: 'Recording Available',
+      color: 'info',
+    },
     [MeetingStatus.TRANSCRIBING]: {
       label: 'Transcribing',
+      color: 'info',
+    },
+    [MeetingStatus.TRANSCRIBED]: {
+      label: 'Transcribed',
       color: 'info',
     },
     [MeetingStatus.ANALYZING]: {
@@ -40,7 +52,7 @@ export function MeetingStatusChip({ status, ...props }: MeetingStatusChipProps) 
     },
   };
 
-  const config = statusConfig[status];
+  const config = statusConfig[status] || { label: status, color: 'default' as const };
 
   return (
     <Chip

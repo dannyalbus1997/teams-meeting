@@ -41,4 +41,10 @@ export declare class MeetingsService {
         failed: number;
         processing: number;
     }>;
+    savePartialTranscript(id: string, fullText: string, segments: Array<{
+        start: number;
+        end: number;
+        text: string;
+        speaker?: string;
+    }>, source?: string): Promise<MeetingDocument>;
 }

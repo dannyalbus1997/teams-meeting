@@ -33,7 +33,7 @@ export function MeetingCard({ meeting }: MeetingCardProps) {
 
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <CardActionArea component={Link} href={`/meetings/${meeting.id}`}>
+      <CardActionArea component={Link} href={`/meetings/${meeting._id || meeting.id}`}>
         <CardContent>
           <Typography variant="h6" component="h3" sx={{ mb: 1 }}>
             {meeting.subject}

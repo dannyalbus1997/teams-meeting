@@ -3,7 +3,10 @@
  */
 export enum MeetingStatus {
   DETECTED = 'detected',
+  LIVE = 'live',
+  RECORDING_AVAILABLE = 'recording_available',
   TRANSCRIBING = 'transcribing',
+  TRANSCRIBED = 'transcribed',
   ANALYZING = 'analyzing',
   COMPLETED = 'completed',
   FAILED = 'failed'
@@ -14,6 +17,7 @@ export enum MeetingStatus {
  */
 export interface Meeting {
   id: string;
+  _id: string;
   teamsEventId: string;
   subject: string;
   organizer: string;
@@ -45,6 +49,7 @@ export interface TranscriptSegment {
  */
 export interface Transcript {
   id: string;
+  _id: string;
   meetingId: string;
   fullText: string;
   segments: TranscriptSegment[];
@@ -71,6 +76,7 @@ export interface ActionItem {
  */
 export interface Summary {
   id: string;
+  _id: string;
   meetingId: string;
   transcriptId: string;
   summary: string;

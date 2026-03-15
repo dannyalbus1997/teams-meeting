@@ -16,6 +16,7 @@ const swagger_1 = require("@nestjs/swagger");
 var MeetingStatus;
 (function (MeetingStatus) {
     MeetingStatus["DETECTED"] = "detected";
+    MeetingStatus["LIVE"] = "live";
     MeetingStatus["RECORDING_AVAILABLE"] = "recording_available";
     MeetingStatus["TRANSCRIBING"] = "transcribing";
     MeetingStatus["TRANSCRIBED"] = "transcribed";

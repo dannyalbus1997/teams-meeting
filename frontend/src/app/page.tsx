@@ -140,14 +140,14 @@ export default function DashboardPage() {
                       <TableBody>
                         {(data?.data || []).map((meeting) => (
                           <TableRow
-                            key={meeting.id}
+                            key={meeting._id || meeting.id}
                             hover
                             sx={{
                               cursor: 'pointer',
                               '&:hover': { backgroundColor: '#F9FAFB' },
                             }}
                             component={Link}
-                            href={`/meetings/${meeting.id}`}
+                            href={`/meetings/${meeting._id || meeting.id}`}
                           >
                             <TableCell sx={{ fontWeight: 500 }}>
                               {meeting.subject}

@@ -35,11 +35,16 @@ export class MeetingsController {
   //  Sync & Webhook endpoints
   // ──────────────────────────────────────────────
 
+  @Get('sync')
+  @ApiOperation({ summary: 'Trigger meeting sync (GET for browser, also works as status check)' })
+  async syncMeetingsGet() {
+    return this.meetingSyncService.syncNow();
+  }
+
   @Post('sync')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Manually trigger meeting sync from Microsoft Graph',
-    description: 'Fetches recent Teams meetings and processes any with available transcripts/recordings',
   })
   async syncMeetings() {
     return this.meetingSyncService.syncNow();

@@ -79,6 +79,9 @@ export class MeetingsService {
   }
 
   async findOne(id: string): Promise<MeetingDocument> {
+    if (!id || id === 'undefined' || id === 'null' || !id.match(/^[0-9a-fA-F]{24}$/)) {
+      throw new BadRequestException(`Invalid meeting ID: ${id}`);
+    }
     const meeting = await this.meetingModel.findById(id).exec();
     if (!meeting) throw new NotFoundException(`Meeting with ID ${id} not found`);
     return meeting;
@@ -223,17 +226,67 @@ export class MeetingsService {
   }
 
   /**
-   * Legacy: process meeting from an already-stored recording
+   * Process a meeting: tries existing transcript first, then stored recording.
+   * If the meeting already has a transcript saved (e.g. from live capture),
+   * it will use that text for AI analysis instead of requiring a recording.
    */
   async processMeeting(id: string): Promise<MeetingDocument> {
     const meeting = await this.findOne(id);
 
-    if (!meeting.recordingStorageKey) {
-      throw new BadRequestException('Recording is not available for this meeting');
+    // Option 1: If we already have a transcript (e.g. from live capture), use it for AI analysis
+    if (meeting.transcriptId) {
+      try {
+        const existingTranscript = await this.transcriptsService.findOne(
+          meeting.transcriptId.toString(),
+        );
+
+        if (existingTranscript && existingTranscript.fullText) {
+          this.logger.log(`Processing meeting ${id} using existing transcript`);
+
+          // Run AI analysis on the existing transcript
+          await this.updateStatus(id, MeetingStatus.ANALYZING);
+
+          const startTime = Date.now();
+          const analysis = await this.aiProvider.analyzeTranscript(
+            existingTranscript.fullText,
+            meeting.subject,
+          );
+          const processingTimeMs = Date.now() - startTime;
+
+          const summary = await this.summariesService.create({
+            meetingId: id,
+            transcriptId: existingTranscript._id.toString(),
+            summary: analysis.summary,
+            keyPoints: analysis.keyPoints,
+            actionItems: analysis.actionItems,
+            decisions: analysis.decisions,
+            sentiment: analysis.sentiment,
+            topics: analysis.topics,
+            processingTimeMs,
+          });
+
+          await this.meetingModel.findByIdAndUpdate(id, { summaryId: summary._id });
+          await this.updateStatus(id, MeetingStatus.COMPLETED);
+
+          this.logger.log(`Meeting ${id} processed from existing transcript in ${processingTimeMs}ms`);
+          return await this.findOne(id);
+        }
+      } catch (error: any) {
+        this.logger.warn(`Failed to use existing transcript for ${id}: ${error.message}`);
+        // Fall through to recording-based processing
+      }
     }
 
-    const recordingBuffer = await this.storageProvider.download(meeting.recordingStorageKey);
-    return this.processWithRecording(id, recordingBuffer);
+    // Option 2: Process from stored recording
+    if (meeting.recordingStorageKey) {
+      const recordingBuffer = await this.storageProvider.download(meeting.recordingStorageKey);
+      return this.processWithRecording(id, recordingBuffer);
+    }
+
+    throw new BadRequestException(
+      'No transcript or recording available for this meeting. ' +
+      'Try triggering a sync first (GET /api/meetings/sync) to fetch transcripts from Teams.',
+    );
   }
 
   /**
@@ -262,5 +315,69 @@ export class MeetingsService {
       processing,
       pending: total - completed - failed - processing,
     };
+  }
+
+  /**
+   * Save or update a partial transcript for a live meeting.
+   * Does NOT trigger AI analysis — that happens after the meeting ends.
+   * This allows users to see the live transcript in the dashboard.
+   */
+  async savePartialTranscript(
+    id: string,
+    fullText: string,
+    segments: Array<{ start: number; end: number; text: string; speaker?: string }>,
+    source: string = 'teams-native-live',
+  ): Promise<MeetingDocument> {
+    try {
+      const meeting = await this.findOne(id);
+
+      // Check if we already have a transcript for this meeting
+      if (meeting.transcriptId) {
+        // Update the existing transcript with new content
+        const existingTranscript = await this.transcriptsService.findOne(
+          meeting.transcriptId.toString(),
+        );
+
+        if (existingTranscript) {
+          await this.transcriptsService.update(existingTranscript._id.toString(), {
+            fullText,
+            segments: segments.map((s) => ({
+              start: s.start,
+              end: s.end,
+              text: s.text,
+              speaker: s.speaker,
+            })),
+            duration: segments.length > 0 ? segments[segments.length - 1].end : 0,
+            source,
+          });
+
+          this.logger.log(`Live transcript updated for meeting ${id} (${segments.length} segments)`);
+          return meeting;
+        }
+      }
+
+      // Create new transcript
+      const transcript = await this.transcriptsService.create({
+        meetingId: id,
+        fullText,
+        segments: segments.map((s) => ({
+          start: s.start,
+          end: s.end,
+          text: s.text,
+          speaker: s.speaker,
+        })),
+        language: 'en',
+        duration: segments.length > 0 ? segments[segments.length - 1].end : 0,
+        source,
+      });
+
+      await this.meetingModel.findByIdAndUpdate(id, { transcriptId: transcript._id });
+
+      this.logger.log(`Live transcript created for meeting ${id} (${segments.length} segments)`);
+      return await this.findOne(id);
+    } catch (error: any) {
+      this.logger.error(`Failed to save partial transcript for meeting ${id}: ${error.message}`);
+      return await this.findOne(id);
+    }
   }
 }

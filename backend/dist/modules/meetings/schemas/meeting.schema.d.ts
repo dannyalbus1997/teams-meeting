@@ -2,6 +2,7 @@ import { Document, Types } from 'mongoose';
 export type MeetingDocument = Meeting & Document;
 export declare enum MeetingStatus {
     DETECTED = "detected",
+    LIVE = "live",
     RECORDING_AVAILABLE = "recording_available",
     TRANSCRIBING = "transcribing",
     TRANSCRIBED = "transcribed",
