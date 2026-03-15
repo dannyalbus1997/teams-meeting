@@ -111,4 +111,12 @@ export const createMeeting = async (
   return response.data;
 };
 
+/**
+ * Trigger meeting sync from Microsoft Teams
+ */
+export const syncMeetings = async (): Promise<{ synced: number; message: string }> => {
+  const response = await apiClient.get<{ synced: number; message: string }>('/meetings/sync');
+  return response.data;
+};
+
 export default apiClient;

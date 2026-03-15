@@ -45,22 +45,49 @@ Only return valid JSON, no additional text.`;
     const userPrompt = `Please analyze this meeting transcript:\n\n${transcript}`;
 
     try {
-      const response = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: this.configService.get<number>('ai.openai.temperature') || 0.7,
-        response_format: { type: 'json_object' },
-      });
+      // Try with response_format first, fall back without it for models that don't support it
+      let content: string | null = null;
 
-      const content = response.choices[0]?.message?.content;
+      try {
+        const response = await this.client.chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: this.configService.get<number>('ai.openai.temperature') || 0.7,
+          response_format: { type: 'json_object' },
+        });
+        content = response.choices[0]?.message?.content;
+      } catch (formatError: any) {
+        // If response_format isn't supported, retry without it
+        if (formatError?.message?.includes('response_format') || formatError?.status === 400) {
+          const response = await this.client.chat.completions.create({
+            model: this.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: this.configService.get<number>('ai.openai.temperature') || 0.7,
+          });
+          content = response.choices[0]?.message?.content;
+        } else {
+          throw formatError;
+        }
+      }
+
       if (!content) {
         throw new Error('Empty response from OpenAI API');
       }
 
-      const analysis = JSON.parse(content) as MeetingAnalysis;
+      // Extract JSON from response (handle markdown code blocks)
+      let jsonStr = content.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
+      }
+
+      const analysis = JSON.parse(jsonStr) as MeetingAnalysis;
       this.validateAnalysis(analysis);
       return analysis;
     } catch (error) {
