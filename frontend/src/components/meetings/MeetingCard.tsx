@@ -6,13 +6,12 @@ import {
   Typography,
   Box,
   Stack,
-  Chip,
   CardActionArea,
 } from '@mui/material';
 import {
   Schedule as ScheduleIcon,
   Group as GroupIcon,
-  AccessTime as AccessTimeIcon,
+  Person as PersonIcon,
 } from '@mui/icons-material';
 import { format, formatDistanceToNow } from 'date-fns';
 import Link from 'next/link';
@@ -23,13 +22,11 @@ interface MeetingCardProps {
   meeting: Meeting;
 }
 
-/**
- * Card component displaying summary information about a meeting
- */
 export function MeetingCard({ meeting }: MeetingCardProps) {
   const startTime = new Date(meeting.startTime);
-  const durationHours = Math.floor(meeting.duration / 3600);
-  const durationMinutes = Math.floor((meeting.duration % 3600) / 60);
+  const endTime = new Date(meeting.endTime);
+  const durationMs = endTime.getTime() - startTime.getTime();
+  const durationMinutes = Math.round(durationMs / 60000);
 
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -41,40 +38,23 @@ export function MeetingCard({ meeting }: MeetingCardProps) {
 
           <Stack spacing={1.5} sx={{ mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <ScheduleIcon
-                sx={{
-                  fontSize: 18,
-                  color: 'text.secondary',
-                }}
-              />
+              <ScheduleIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
               <Typography variant="body2" color="text.secondary">
-                {format(startTime, 'MMM d, yyyy')} at{' '}
-                {format(startTime, 'h:mm a')}
+                {format(startTime, 'MMM d, yyyy')} at {format(startTime, 'h:mm a')}
               </Typography>
             </Box>
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <AccessTimeIcon
-                sx={{
-                  fontSize: 18,
-                  color: 'text.secondary',
-                }}
-              />
+              <PersonIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
               <Typography variant="body2" color="text.secondary">
-                {durationHours > 0 && `${durationHours}h `}
-                {durationMinutes}m
+                {meeting.organizerName || meeting.organizerEmail || 'Unknown'}
               </Typography>
             </Box>
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <GroupIcon
-                sx={{
-                  fontSize: 18,
-                  color: 'text.secondary',
-                }}
-              />
+              <GroupIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
               <Typography variant="body2" color="text.secondary">
-                {meeting.participants.length} participants
+                {meeting.attendees?.length || 0} attendees &middot; {durationMinutes}min
               </Typography>
             </Box>
           </Stack>

@@ -1,30 +1,25 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Meeting, MeetingSchema } from './schemas/meeting.schema';
 import { MeetingsService } from './meetings.service';
 import { MeetingsController } from './meetings.controller';
-import { MeetingSyncService } from './meetings-sync.service';
 import { TranscriptsModule } from '../transcripts/transcripts.module';
 import { SummariesModule } from '../summaries/summaries.module';
-import { SpeechModule } from '../speech/speech.module';
-import { AiModule } from '../ai/ai.module';
-import { StorageModule } from '../storage/storage.module';
 import { GraphModule } from '../graph/graph.module';
 import { AuthModule } from '../auth/auth.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Meeting.name, schema: MeetingSchema }]),
-    forwardRef(() => TranscriptsModule),
-    forwardRef(() => SummariesModule),
-    forwardRef(() => SpeechModule),
-    forwardRef(() => AiModule),
-    forwardRef(() => StorageModule),
+    TranscriptsModule,
+    SummariesModule,
     GraphModule,
     AuthModule,
+    AiModule,
   ],
   controllers: [MeetingsController],
-  providers: [MeetingsService, MeetingSyncService],
-  exports: [MeetingsService, MeetingSyncService],
+  providers: [MeetingsService],
+  exports: [MeetingsService],
 })
 export class MeetingsModule {}

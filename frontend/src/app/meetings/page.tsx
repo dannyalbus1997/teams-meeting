@@ -7,7 +7,6 @@ import {
   Typography,
   Card,
   CardContent,
-  Box,
   Grid,
   Select,
   MenuItem,
@@ -19,17 +18,13 @@ import {
 } from '@mui/material';
 import { Header } from '@/components/layout/Header';
 import { MeetingCard } from '@/components/meetings/MeetingCard';
-import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ErrorAlert } from '@/components/common/ErrorAlert';
 import { useMeetings } from '@/hooks/useMeetings';
 import { MeetingStatus, GetMeetingsParams } from '@/types';
 
-/**
- * Meetings list page with filtering and grid view
- */
 export default function MeetingsPage() {
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(12);
+  const [limit] = useState(12);
   const [statusFilter, setStatusFilter] = useState<MeetingStatus | ''>('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -42,10 +37,11 @@ export default function MeetingsPage() {
       ...(startDate && { startDate }),
       ...(endDate && { endDate }),
     }),
-    [page, limit, statusFilter, startDate, endDate]
+    [page, limit, statusFilter, startDate, endDate],
   );
 
   const { data, isLoading, error, refetch } = useMeetings(params);
+  const totalPages = data ? Math.ceil(data.total / limit) : 0;
 
   const handleResetFilters = () => {
     setStatusFilter('');
@@ -53,8 +49,6 @@ export default function MeetingsPage() {
     setEndDate('');
     setPage(1);
   };
-
-  const totalPages = data ? Math.ceil(data.total / limit) : 0;
 
   return (
     <>
@@ -66,10 +60,7 @@ export default function MeetingsPage() {
           <Card>
             <CardContent>
               <Stack spacing={2}>
-                <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                  Filters
-                </Typography>
-
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>Filters</Typography>
                 <Grid container spacing={2}>
                   <Grid item xs={12} sm={6} md={3}>
                     <FormControl fullWidth size="small">
@@ -85,8 +76,7 @@ export default function MeetingsPage() {
                         <MenuItem value="">All</MenuItem>
                         {Object.values(MeetingStatus).map((status) => (
                           <MenuItem key={status} value={status}>
-                            {status.charAt(0).toUpperCase() +
-                              status.slice(1)}
+                            {status.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
                           </MenuItem>
                         ))}
                       </Select>
@@ -98,10 +88,7 @@ export default function MeetingsPage() {
                       type="date"
                       label="Start Date"
                       value={startDate}
-                      onChange={(e) => {
-                        setStartDate(e.target.value);
-                        setPage(1);
-                      }}
+                      onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
                       size="small"
                       fullWidth
                       InputLabelProps={{ shrink: true }}
@@ -113,10 +100,7 @@ export default function MeetingsPage() {
                       type="date"
                       label="End Date"
                       value={endDate}
-                      onChange={(e) => {
-                        setEndDate(e.target.value);
-                        setPage(1);
-                      }}
+                      onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
                       size="small"
                       fullWidth
                       InputLabelProps={{ shrink: true }}
@@ -124,12 +108,7 @@ export default function MeetingsPage() {
                   </Grid>
 
                   <Grid item xs={12} sm={6} md={3}>
-                    <Button
-                      fullWidth
-                      variant="outlined"
-                      onClick={handleResetFilters}
-                      sx={{ height: '40px' }}
-                    >
+                    <Button fullWidth variant="outlined" onClick={handleResetFilters} sx={{ height: '40px' }}>
                       Reset Filters
                     </Button>
                   </Grid>
@@ -138,25 +117,13 @@ export default function MeetingsPage() {
             </CardContent>
           </Card>
 
-          {/* Error state */}
-          {error && (
-            <ErrorAlert
-              message="Failed to load meetings"
-              error={error}
-              onRetry={() => refetch()}
-            />
-          )}
+          {error && <ErrorAlert message="Failed to load meetings" error={error} onRetry={() => refetch()} />}
 
-          {/* Meetings grid */}
           {isLoading ? (
             <Grid container spacing={2}>
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <Grid item xs={12} sm={6} md={4} key={i}>
-                  <Skeleton
-                    variant="rectangular"
-                    height={250}
-                    sx={{ borderRadius: 1 }}
-                  />
+                  <Skeleton variant="rectangular" height={250} sx={{ borderRadius: 1 }} />
                 </Grid>
               ))}
             </Grid>
@@ -170,49 +137,25 @@ export default function MeetingsPage() {
                 ))}
               </Grid>
 
-              {/* Pagination */}
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  gap: 1,
-                  mt: 3,
-                }}
-              >
-                <Button
-                  disabled={page === 1}
-                  onClick={() => setPage(page - 1)}
-                  variant="outlined"
-                >
-                  Previous
-                </Button>
-
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    px: 2,
-                  }}
-                >
-                  <Typography variant="body2">
+              {totalPages > 1 && (
+                <Stack direction="row" spacing={1} justifyContent="center" sx={{ mt: 3 }}>
+                  <Button disabled={page === 1} onClick={() => setPage(page - 1)} variant="outlined">
+                    Previous
+                  </Button>
+                  <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', px: 2 }}>
                     Page {page} of {totalPages}
                   </Typography>
-                </Box>
-
-                <Button
-                  disabled={page >= totalPages}
-                  onClick={() => setPage(page + 1)}
-                  variant="outlined"
-                >
-                  Next
-                </Button>
-              </Box>
+                  <Button disabled={page >= totalPages} onClick={() => setPage(page + 1)} variant="outlined">
+                    Next
+                  </Button>
+                </Stack>
+              )}
             </>
           ) : (
             <Card>
               <CardContent sx={{ textAlign: 'center', py: 4 }}>
                 <Typography color="text.secondary">
-                  No meetings found
+                  No meetings found. Click the sync button to import meetings from Teams.
                 </Typography>
               </CardContent>
             </Card>

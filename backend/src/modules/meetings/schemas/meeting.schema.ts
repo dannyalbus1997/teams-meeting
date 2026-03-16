@@ -5,13 +5,9 @@ import { ApiProperty } from '@nestjs/swagger';
 export type MeetingDocument = Meeting & Document;
 
 export enum MeetingStatus {
-  DETECTED = 'detected',
-  LIVE = 'live',
-  RECORDING_AVAILABLE = 'recording_available',
-  TRANSCRIBING = 'transcribing',
-  TRANSCRIBED = 'transcribed',
-  ANALYZING = 'analyzing',
-  COMPLETED = 'completed',
+  SYNCED = 'synced',
+  TRANSCRIPT_FETCHED = 'transcript_fetched',
+  SUMMARIZED = 'summarized',
   FAILED = 'failed',
 }
 
@@ -19,31 +15,27 @@ export enum MeetingStatus {
 export class Meeting {
   @ApiProperty()
   @Prop({ required: true })
-  teamsEventId: string;
-
-  @ApiProperty()
-  @Prop({ required: true })
   subject: string;
-
-  @ApiProperty()
-  @Prop()
-  organizer: string;
-
-  @ApiProperty()
-  @Prop({ type: [String] })
-  participants: string[];
 
   @ApiProperty()
   @Prop({ required: true })
   startTime: Date;
 
   @ApiProperty()
-  @Prop()
+  @Prop({ required: true })
   endTime: Date;
 
   @ApiProperty()
   @Prop()
-  duration: number; // in seconds
+  organizerName: string;
+
+  @ApiProperty()
+  @Prop()
+  organizerEmail: string;
+
+  @ApiProperty()
+  @Prop({ type: [String] })
+  attendees: string[];
 
   @ApiProperty()
   @Prop()
@@ -51,14 +43,14 @@ export class Meeting {
 
   @ApiProperty()
   @Prop()
-  recordingUrl: string;
+  onlineMeetingId: string;
 
   @ApiProperty()
   @Prop()
-  recordingStorageKey: string;
+  calendarEventId: string;
 
   @ApiProperty({ enum: MeetingStatus })
-  @Prop({ type: String, enum: MeetingStatus, default: MeetingStatus.DETECTED })
+  @Prop({ type: String, enum: MeetingStatus, default: MeetingStatus.SYNCED })
   status: MeetingStatus;
 
   @ApiProperty()
@@ -72,14 +64,9 @@ export class Meeting {
   @ApiProperty()
   @Prop()
   errorMessage: string;
-
-  @ApiProperty()
-  @Prop({ type: Object })
-  metadata: Record<string, any>;
 }
 
 export const MeetingSchema = SchemaFactory.createForClass(Meeting);
 
-MeetingSchema.index({ teamsEventId: 1 }, { unique: true });
+MeetingSchema.index({ calendarEventId: 1 }, { unique: true, sparse: true });
 MeetingSchema.index({ startTime: -1 });
-MeetingSchema.index({ status: 1 });

@@ -1,121 +1,88 @@
 import axios, { AxiosInstance } from 'axios';
 import {
   Meeting,
-  Transcript,
+  MeetingWithDetails,
   Summary,
   PaginatedResponse,
   GetMeetingsParams,
+  SyncResponse,
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
-/**
- * Create and configure axios client
- */
 const apiClient: AxiosInstance = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  timeout: 30000,
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 60000, // 60s — summarization can take a while
 });
 
-/**
- * Add interceptors for global error handling if needed
- */
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     console.error('API Error:', error);
     return Promise.reject(error);
-  }
+  },
 );
 
-/**
- * Fetch paginated list of meetings
- */
+// ─── Meetings CRUD ─────────────────────────────
+
 export const getMeetings = async (
-  params?: GetMeetingsParams
+  params?: GetMeetingsParams,
 ): Promise<PaginatedResponse<Meeting>> => {
-  const response = await apiClient.get<PaginatedResponse<Meeting>>(
-    '/meetings',
-    { params }
-  );
+  const response = await apiClient.get<PaginatedResponse<Meeting>>('/meetings', { params });
   return response.data;
 };
 
-/**
- * Fetch a single meeting by ID
- */
-export const getMeeting = async (id: string): Promise<Meeting> => {
-  const response = await apiClient.get<Meeting>(`/meetings/${id}`);
+export const getMeeting = async (id: string): Promise<MeetingWithDetails> => {
+  const response = await apiClient.get<MeetingWithDetails>(`/meetings/${id}`);
   return response.data;
 };
 
-/**
- * Fetch transcript for a meeting
- */
-export const getMeetingTranscript = async (
-  meetingId: string
-): Promise<Transcript> => {
-  const response = await apiClient.get<Transcript>(
-    `/meetings/${meetingId}/transcript`
-  );
+export const getMeetingStats = async (): Promise<{
+  total: number;
+  synced: number;
+  transcriptFetched: number;
+  summarized: number;
+  failed: number;
+}> => {
+  const response = await apiClient.get('/meetings/stats');
   return response.data;
 };
 
-/**
- * Fetch summary for a meeting
- */
-export const getMeetingSummary = async (
-  meetingId: string
-): Promise<Summary> => {
-  const response = await apiClient.get<Summary>(
-    `/meetings/${meetingId}/summary`
-  );
+// ─── Step 1: Sync meetings from Teams ──────────
+
+export const syncMeetings = async (daysBack: number = 7): Promise<SyncResponse> => {
+  const response = await apiClient.post<SyncResponse>('/meetings/sync', {}, {
+    params: { daysBack },
+  });
   return response.data;
 };
 
-/**
- * Trigger processing for a meeting
- */
-export const processMeeting = async (id: string): Promise<Meeting> => {
-  const response = await apiClient.post<Meeting>(
-    `/meetings/${id}/process`
-  );
+// ─── Step 2: Fetch transcript ──────────────────
+
+export const fetchTranscript = async (meetingId: string): Promise<Meeting> => {
+  const response = await apiClient.post<Meeting>(`/meetings/${meetingId}/fetch-transcript`, {});
   return response.data;
 };
 
-/**
- * Toggle completion status of an action item
- */
+// ─── Step 3: Summarize ─────────────────────────
+
+export const summarizeMeeting = async (meetingId: string): Promise<Meeting> => {
+  const response = await apiClient.post<Meeting>(`/meetings/${meetingId}/summarize`, {});
+  return response.data;
+};
+
+// ─── Action items ──────────────────────────────
+
 export const toggleActionItem = async (
   summaryId: string,
   actionItemIndex: number,
-  completed: boolean
+  completed: boolean,
 ): Promise<Summary> => {
   const response = await apiClient.patch<Summary>(
     `/summaries/${summaryId}/action-items/${actionItemIndex}`,
-    { completed }
+    { completed },
   );
-  return response.data;
-};
-
-/**
- * Create a new meeting
- */
-export const createMeeting = async (
-  data: Partial<Meeting>
-): Promise<Meeting> => {
-  const response = await apiClient.post<Meeting>('/meetings', data);
-  return response.data;
-};
-
-/**
- * Trigger meeting sync from Microsoft Teams
- */
-export const syncMeetings = async (): Promise<{ synced: number; message: string }> => {
-  const response = await apiClient.get<{ synced: number; message: string }>('/meetings/sync');
   return response.data;
 };
 

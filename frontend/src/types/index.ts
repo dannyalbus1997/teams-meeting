@@ -1,15 +1,11 @@
 /**
- * Enum for meeting processing status
+ * Meeting status — matches backend MeetingStatus enum
  */
 export enum MeetingStatus {
-  DETECTED = 'detected',
-  LIVE = 'live',
-  RECORDING_AVAILABLE = 'recording_available',
-  TRANSCRIBING = 'transcribing',
-  TRANSCRIBED = 'transcribed',
-  ANALYZING = 'analyzing',
-  COMPLETED = 'completed',
-  FAILED = 'failed'
+  SYNCED = 'synced',
+  TRANSCRIPT_FETCHED = 'transcript_fetched',
+  SUMMARIZED = 'summarized',
+  FAILED = 'failed',
 }
 
 /**
@@ -18,23 +14,33 @@ export enum MeetingStatus {
 export interface Meeting {
   id: string;
   _id: string;
-  teamsEventId: string;
   subject: string;
-  organizer: string;
-  participants: string[];
   startTime: string;
   endTime: string;
-  duration: number;
+  organizerName: string;
+  organizerEmail: string;
+  attendees: string[];
   joinUrl: string;
+  onlineMeetingId?: string;
+  calendarEventId?: string;
   status: MeetingStatus;
   transcriptId?: string;
   summaryId?: string;
+  errorMessage?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 /**
- * Represents a segment of transcript with speaker info
+ * Meeting with transcript and summary populated (from GET /meetings/:id)
+ */
+export interface MeetingWithDetails extends Meeting {
+  transcript?: Transcript | null;
+  summary?: Summary | null;
+}
+
+/**
+ * Transcript segment
  */
 export interface TranscriptSegment {
   start: number;
@@ -45,7 +51,7 @@ export interface TranscriptSegment {
 }
 
 /**
- * Represents the full transcript of a meeting
+ * Full transcript
  */
 export interface Transcript {
   id: string;
@@ -61,7 +67,7 @@ export interface Transcript {
 }
 
 /**
- * Represents an action item from the summary
+ * Action item from AI summary
  */
 export interface ActionItem {
   assignee: string;
@@ -72,7 +78,7 @@ export interface ActionItem {
 }
 
 /**
- * Represents the AI-generated summary of a meeting
+ * AI-generated summary
  */
 export interface Summary {
   id: string;
@@ -92,7 +98,7 @@ export interface Summary {
 }
 
 /**
- * Generic paginated response type
+ * Paginated response
  */
 export interface PaginatedResponse<T> {
   data: T[];
@@ -102,15 +108,7 @@ export interface PaginatedResponse<T> {
 }
 
 /**
- * Meeting with optional transcript and summary
- */
-export interface MeetingWithDetails extends Meeting {
-  transcript?: Transcript;
-  summary?: Summary;
-}
-
-/**
- * Query parameters for fetching meetings
+ * Query params for meetings list
  */
 export interface GetMeetingsParams {
   status?: MeetingStatus;
@@ -118,4 +116,12 @@ export interface GetMeetingsParams {
   limit?: number;
   startDate?: string;
   endDate?: string;
+}
+
+/**
+ * Sync response
+ */
+export interface SyncResponse {
+  synced: number;
+  total: number;
 }

@@ -1,62 +1,45 @@
-import { IsString, IsArray, IsDate, IsOptional, IsUrl } from 'class-validator';
+import { IsString, IsArray, IsDate, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
 export class CreateMeetingDto {
-  @ApiProperty({
-    description: 'The Teams event ID from Microsoft Teams',
-    example: 'AAMkADc3NTRlZjkz...',
-  })
-  @IsString()
-  teamsEventId: string;
-
-  @ApiProperty({
-    description: 'Meeting subject/title',
-    example: 'Q1 Planning Meeting',
-  })
+  @ApiProperty({ description: 'Meeting subject/title' })
   @IsString()
   subject: string;
 
-  @ApiPropertyOptional({
-    description: 'Meeting organizer name',
-    example: 'John Doe',
-  })
-  @IsString()
-  @IsOptional()
-  organizer?: string;
-
-  @ApiPropertyOptional({
-    description: 'List of participant email addresses or names',
-    type: [String],
-    example: ['jane@example.com', 'bob@example.com'],
-  })
-  @IsArray()
-  @IsString({ each: true })
-  @IsOptional()
-  participants?: string[];
-
-  @ApiProperty({
-    description: 'Meeting start time',
-    example: '2026-03-15T10:00:00Z',
-  })
+  @ApiProperty({ description: 'Meeting start time' })
   @IsDate()
   @Type(() => Date)
   startTime: Date;
 
-  @ApiPropertyOptional({
-    description: 'Meeting end time',
-    example: '2026-03-15T11:00:00Z',
-  })
+  @ApiProperty({ description: 'Meeting end time' })
   @IsDate()
   @Type(() => Date)
-  @IsOptional()
-  endTime?: Date;
+  endTime: Date;
 
-  @ApiPropertyOptional({
-    description: 'Teams meeting join URL',
-    example: 'https://teams.microsoft.com/l/meetup-join/19:...',
-  })
-  @IsUrl()
+  @ApiPropertyOptional({ description: 'Organizer display name' })
+  @IsString()
+  @IsOptional()
+  organizerName?: string;
+
+  @ApiPropertyOptional({ description: 'Organizer email / UPN' })
+  @IsString()
+  @IsOptional()
+  organizerEmail?: string;
+
+  @ApiPropertyOptional({ description: 'Attendee names or emails', type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  attendees?: string[];
+
+  @ApiPropertyOptional({ description: 'Teams meeting join URL' })
+  @IsString()
   @IsOptional()
   joinUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Calendar event ID from Graph API' })
+  @IsString()
+  @IsOptional()
+  calendarEventId?: string;
 }

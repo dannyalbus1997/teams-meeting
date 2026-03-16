@@ -25,7 +25,7 @@ async function bootstrap() {
     .setTitle('Teams Meeting Summarizer API')
     .setDescription('API for processing Teams meetings, transcripts, and AI summaries')
     .setVersion('1.0')
-    .addServer(`http://localhost:${port}/api`, 'Local (development)')
+    .addServer(`http://localhost:${port}`, 'Local (development)')
     .addBearerAuth(
       {
         type: 'http',

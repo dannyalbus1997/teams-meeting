@@ -12,13 +12,13 @@ import {
   Box,
   Button,
   Alert,
-  Skeleton,
   Chip,
   Grid,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
-  GetApp as GetAppIcon,
+  Download as DownloadIcon,
+  AutoAwesome as AutoAwesomeIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -30,61 +30,38 @@ import { KeyPointsList } from '@/components/summaries/KeyPointsList';
 import { ActionItemList } from '@/components/summaries/ActionItemList';
 import { LoadingSpinner } from '@/components/common/LoadingSpinner';
 import { ErrorAlert } from '@/components/common/ErrorAlert';
-import {
-  useMeeting,
-  useMeetingTranscript,
-  useMeetingSummary,
-  useProcessMeeting,
-} from '@/hooks/useMeetings';
+import { useMeeting, useFetchTranscript, useSummarizeMeeting } from '@/hooks/useMeetings';
 import { MeetingStatus } from '@/types';
 
 interface MeetingDetailPageProps {
-  params: {
-    id: string;
-  };
+  params: { id: string };
 }
 
-/**
- * Meeting detail page with tabs for overview, transcript, and summary
- */
 export default function MeetingDetailPage({ params }: MeetingDetailPageProps) {
   const { id } = params;
   const router = useRouter();
   const [tabValue, setTabValue] = useState(0);
 
-  const { data: meeting, isLoading: meetingLoading, error: meetingError } =
-    useMeeting(id);
+  const { data: meeting, isLoading: meetingLoading, error: meetingError, refetch } = useMeeting(id);
 
   const {
-    data: transcript,
-    isLoading: transcriptLoading,
-    error: transcriptError,
-  } = useMeetingTranscript(id, meeting?.status === MeetingStatus.COMPLETED);
+    mutate: doFetchTranscript,
+    isPending: isFetchingTranscript,
+    error: fetchTranscriptError,
+  } = useFetchTranscript();
 
   const {
-    data: summary,
-    isLoading: summaryLoading,
-    error: summaryError,
-  } = useMeetingSummary(id, meeting?.status === MeetingStatus.COMPLETED);
+    mutate: doSummarize,
+    isPending: isSummarizing,
+    error: summarizeError,
+  } = useSummarizeMeeting();
 
-  const {
-    mutate: processMeeting,
-    isPending: isProcessing,
-    error: processError,
-  } = useProcessMeeting();
-
-  if (meetingLoading) {
-    return <LoadingSpinner message="Loading meeting details..." />;
-  }
+  if (meetingLoading) return <LoadingSpinner message="Loading meeting details..." />;
 
   if (meetingError) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        <ErrorAlert
-          message="Failed to load meeting"
-          error={meetingError}
-          onRetry={() => router.refresh()}
-        />
+        <ErrorAlert message="Failed to load meeting" error={meetingError} onRetry={() => router.refresh()} />
       </Container>
     );
   }
@@ -97,13 +74,22 @@ export default function MeetingDetailPage({ params }: MeetingDetailPageProps) {
     );
   }
 
-  const isCompleted = meeting.status === MeetingStatus.COMPLETED;
   const startTime = new Date(meeting.startTime);
   const endTime = new Date(meeting.endTime);
+  const durationMs = endTime.getTime() - startTime.getTime();
+  const durationMinutes = Math.round(durationMs / 60000);
 
+  const transcript = meeting.transcript;
+  const summary = meeting.summary;
+  const hasTranscript = !!transcript;
+  const hasSummary = !!summary;
+
+  // Determine which action buttons to show
+  const canFetchTranscript = meeting.status === MeetingStatus.SYNCED;
+  const canSummarize = meeting.status === MeetingStatus.TRANSCRIPT_FETCHED;
   return (
     <>
-      <Header title={meeting.subject} onRefresh={() => router.refresh()} />
+      <Header title={meeting.subject} onRefresh={() => refetch()} />
 
       <Container maxWidth="lg" sx={{ py: 4, flex: 1 }}>
         <Stack spacing={3}>
@@ -118,7 +104,7 @@ export default function MeetingDetailPage({ params }: MeetingDetailPageProps) {
             Back to Meetings
           </Button>
 
-          {/* Meeting header */}
+          {/* Meeting header card */}
           <Card>
             <CardContent>
               <Stack spacing={2}>
@@ -138,71 +124,79 @@ export default function MeetingDetailPage({ params }: MeetingDetailPageProps) {
                     <MeetingStatusChip status={meeting.status} />
                   </div>
 
-                  {!isCompleted && (
-                    <Button
-                      variant="contained"
-                      onClick={() => processMeeting(id)}
-                      disabled={isProcessing}
-                    >
-                      {isProcessing ? 'Processing...' : 'Process Meeting'}
-                    </Button>
-                  )}
+                  <Stack direction="row" spacing={1}>
+                    {/* Step 2 button: Fetch Transcript */}
+                    {canFetchTranscript && (
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        startIcon={<DownloadIcon />}
+                        onClick={() => doFetchTranscript(id)}
+                        disabled={isFetchingTranscript}
+                      >
+                        {isFetchingTranscript ? 'Fetching Transcript...' : 'Fetch Transcript'}
+                      </Button>
+                    )}
+
+                    {/* Step 3 button: Summarize */}
+                    {canSummarize && (
+                      <Button
+                        variant="contained"
+                        color="secondary"
+                        startIcon={<AutoAwesomeIcon />}
+                        onClick={() => doSummarize(id)}
+                        disabled={isSummarizing}
+                      >
+                        {isSummarizing ? 'Summarizing with GPT-4o...' : 'Summarize with AI'}
+                      </Button>
+                    )}
+                  </Stack>
                 </Box>
 
-                {processError && (
-                  <ErrorAlert
-                    message="Failed to process meeting"
-                    error={processError}
-                  />
+                {/* Error alerts */}
+                {fetchTranscriptError && (
+                  <ErrorAlert message="Failed to fetch transcript" error={fetchTranscriptError} />
+                )}
+                {summarizeError && (
+                  <ErrorAlert message="Failed to summarize" error={summarizeError} />
+                )}
+                {meeting.errorMessage && (
+                  <Alert severity="warning">{meeting.errorMessage}</Alert>
                 )}
 
+                {/* Meeting info grid */}
                 <Grid container spacing={3}>
                   <Grid item xs={12} sm={6}>
                     <Stack spacing={1}>
-                      <Typography variant="caption" color="text.secondary">
-                        Organizer
-                      </Typography>
+                      <Typography variant="caption" color="text.secondary">Organizer</Typography>
                       <Typography variant="body2">
-                        {meeting.organizer}
+                        {meeting.organizerName || meeting.organizerEmail || 'Unknown'}
                       </Typography>
                     </Stack>
                   </Grid>
 
                   <Grid item xs={12} sm={6}>
                     <Stack spacing={1}>
-                      <Typography variant="caption" color="text.secondary">
-                        Start Time
-                      </Typography>
-                      <Typography variant="body2">
-                        {format(startTime, 'PPP p')}
-                      </Typography>
+                      <Typography variant="caption" color="text.secondary">Start Time</Typography>
+                      <Typography variant="body2">{format(startTime, 'PPP p')}</Typography>
+                    </Stack>
+                  </Grid>
+
+                  <Grid item xs={12} sm={6}>
+                    <Stack spacing={1}>
+                      <Typography variant="caption" color="text.secondary">Duration</Typography>
+                      <Typography variant="body2">{durationMinutes} minutes</Typography>
                     </Stack>
                   </Grid>
 
                   <Grid item xs={12} sm={6}>
                     <Stack spacing={1}>
                       <Typography variant="caption" color="text.secondary">
-                        Duration
-                      </Typography>
-                      <Typography variant="body2">
-                        {Math.floor(meeting.duration / 3600)}h{' '}
-                        {Math.floor((meeting.duration % 3600) / 60)}m
-                      </Typography>
-                    </Stack>
-                  </Grid>
-
-                  <Grid item xs={12} sm={6}>
-                    <Stack spacing={1}>
-                      <Typography variant="caption" color="text.secondary">
-                        Participants ({meeting.participants.length})
+                        Attendees ({meeting.attendees?.length || 0})
                       </Typography>
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {meeting.participants.map((participant) => (
-                          <Chip
-                            key={participant}
-                            label={participant}
-                            size="small"
-                          />
+                        {(meeting.attendees || []).map((att) => (
+                          <Chip key={att} label={att} size="small" />
                         ))}
                       </Box>
                     </Stack>
@@ -211,9 +205,7 @@ export default function MeetingDetailPage({ params }: MeetingDetailPageProps) {
                   {meeting.joinUrl && (
                     <Grid item xs={12} sm={6}>
                       <Stack spacing={1}>
-                        <Typography variant="caption" color="text.secondary">
-                          Join URL
-                        </Typography>
+                        <Typography variant="caption" color="text.secondary">Join URL</Typography>
                         <Button
                           href={meeting.joinUrl}
                           target="_blank"
@@ -232,179 +224,116 @@ export default function MeetingDetailPage({ params }: MeetingDetailPageProps) {
             </CardContent>
           </Card>
 
-          {/* Tabs for different views */}
-          {isCompleted && (
+          {/* Tabs: only show when we have transcript or summary */}
+          {(hasTranscript || hasSummary) && (
             <Card>
               <Box sx={{ borderBottom: '1px solid', borderColor: 'divider' }}>
-                <Tabs value={tabValue} onChange={(e, v) => setTabValue(v)}>
-                  <Tab label="Overview" />
-                  <Tab label="Transcript" />
-                  <Tab label="Summary" />
+                <Tabs value={tabValue} onChange={(_, v) => setTabValue(v)}>
+                  {hasSummary && <Tab label="Overview" />}
+                  {hasTranscript && <Tab label="Transcript" />}
+                  {hasSummary && <Tab label="Details" />}
                 </Tabs>
               </Box>
 
               <CardContent>
-                {/* Overview Tab */}
-                {tabValue === 0 && (
-                  <Stack spacing={2}>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                      Meeting Summary
-                    </Typography>
-                    {summaryLoading ? (
-                      <Skeleton height={100} />
-                    ) : summary ? (
-                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {summary.summary}
-                      </Typography>
-                    ) : (
-                      <Alert severity="info">
-                        Summary not yet available
-                      </Alert>
-                    )}
-                  </Stack>
-                )}
+                {/* Build tab content dynamically based on what's available */}
+                {(() => {
+                  const tabs: React.ReactNode[] = [];
 
-                {/* Transcript Tab */}
-                {tabValue === 1 && (
-                  <>
-                    {transcriptError && (
-                      <ErrorAlert
-                        message="Failed to load transcript"
-                        error={transcriptError}
-                      />
-                    )}
-                    {transcriptLoading ? (
-                      <Stack spacing={1}>
-                        <Skeleton height={80} />
-                        <Skeleton height={80} />
-                        <Skeleton height={80} />
-                      </Stack>
-                    ) : transcript ? (
-                      <TranscriptViewer transcript={transcript} />
-                    ) : (
-                      <Alert severity="info">
-                        Transcript not yet available
-                      </Alert>
-                    )}
-                  </>
-                )}
+                  // Overview tab (summary text)
+                  if (hasSummary) {
+                    tabs.push(
+                      <Stack spacing={2} key="overview">
+                        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                          Meeting Summary
+                        </Typography>
+                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {summary!.summary}
+                        </Typography>
+                      </Stack>,
+                    );
+                  }
 
-                {/* Summary Tab */}
-                {tabValue === 2 && (
-                  <>
-                    {summaryError && (
-                      <ErrorAlert
-                        message="Failed to load summary"
-                        error={summaryError}
-                      />
-                    )}
-                    {summaryLoading ? (
-                      <Stack spacing={1}>
-                        <Skeleton height={100} />
-                        <Skeleton height={100} />
-                      </Stack>
-                    ) : summary ? (
-                      <Stack spacing={3}>
-                        {/* Key Points */}
-                        <div>
-                          <Typography
-                            variant="subtitle1"
-                            sx={{ fontWeight: 600, mb: 2 }}
-                          >
-                            Key Points
-                          </Typography>
-                          <KeyPointsList items={summary.keyPoints} />
-                        </div>
+                  // Transcript tab
+                  if (hasTranscript) {
+                    tabs.push(
+                      <TranscriptViewer key="transcript" transcript={transcript!} />,
+                    );
+                  }
 
-                        {/* Decisions */}
-                        {summary.decisions.length > 0 && (
+                  // Details tab (key points, decisions, actions, topics)
+                  if (hasSummary) {
+                    tabs.push(
+                      <Stack spacing={3} key="details">
+                        {summary!.keyPoints.length > 0 && (
                           <div>
-                            <Typography
-                              variant="subtitle1"
-                              sx={{ fontWeight: 600, mb: 2 }}
-                            >
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+                              Key Points
+                            </Typography>
+                            <KeyPointsList items={summary!.keyPoints} />
+                          </div>
+                        )}
+                        {summary!.decisions.length > 0 && (
+                          <div>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
                               Decisions
                             </Typography>
-                            <KeyPointsList items={summary.decisions} />
+                            <KeyPointsList items={summary!.decisions} />
                           </div>
                         )}
-
-                        {/* Action Items */}
-                        {summary.actionItems.length > 0 && (
+                        {summary!.actionItems.length > 0 && (
                           <div>
-                            <Typography
-                              variant="subtitle1"
-                              sx={{ fontWeight: 600, mb: 2 }}
-                            >
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
                               Action Items
                             </Typography>
-                            <ActionItemList
-                              items={summary.actionItems}
-                              summaryId={summary.id}
-                            />
+                            <ActionItemList items={summary!.actionItems} summaryId={summary!._id || summary!.id} />
                           </div>
                         )}
-
-                        {/* Topics */}
-                        {summary.topics.length > 0 && (
+                        {summary!.topics.length > 0 && (
                           <div>
-                            <Typography
-                              variant="subtitle1"
-                              sx={{ fontWeight: 600, mb: 2 }}
-                            >
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
                               Topics Discussed
                             </Typography>
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                              {summary.topics.map((topic) => (
+                              {summary!.topics.map((topic) => (
                                 <Chip key={topic} label={topic} />
                               ))}
                             </Box>
                           </div>
                         )}
-
-                        {/* Metadata */}
-                        <Box
-                          sx={{
-                            pt: 2,
-                            borderTop: '1px solid',
-                            borderColor: 'divider',
-                          }}
-                        >
+                        <Box sx={{ pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
                           <Stack
                             direction={{ xs: 'column', sm: 'row' }}
                             spacing={2}
                             sx={{ fontSize: '0.875rem', color: 'text.secondary' }}
                           >
-                            <span>
-                              AI Provider: {summary.aiProvider}
-                            </span>
-                            <span>
-                              Model: {summary.modelUsed}
-                            </span>
-                            <span>
-                              Processing Time: {summary.processingTimeMs}ms
-                            </span>
-                            <span>
-                              Sentiment: {summary.sentiment}
-                            </span>
+                            <span>AI Provider: {summary!.aiProvider}</span>
+                            <span>Model: {summary!.modelUsed}</span>
+                            <span>Processing: {summary!.processingTimeMs}ms</span>
+                            {summary!.sentiment && <span>Sentiment: {summary!.sentiment}</span>}
                           </Stack>
                         </Box>
-                      </Stack>
-                    ) : (
-                      <Alert severity="info">
-                        Summary not yet available
-                      </Alert>
-                    )}
-                  </>
-                )}
+                      </Stack>,
+                    );
+                  }
+
+                  return tabs[tabValue] || null;
+                })()}
               </CardContent>
             </Card>
           )}
 
-          {!isCompleted && (
+          {/* Info when nothing fetched yet */}
+          {!hasTranscript && !hasSummary && meeting.status === MeetingStatus.SYNCED && (
             <Alert severity="info">
-              This meeting is currently being processed. Come back later to view
-              the transcript and summary.
+              This meeting was synced from Teams. Click &quot;Fetch Transcript&quot; to download
+              the transcript, then &quot;Summarize with AI&quot; to generate a summary.
+            </Alert>
+          )}
+
+          {meeting.status === MeetingStatus.FAILED && (
+            <Alert severity="error">
+              Processing failed: {meeting.errorMessage || 'Unknown error'}
             </Alert>
           )}
         </Stack>

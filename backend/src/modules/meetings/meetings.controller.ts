@@ -2,28 +2,20 @@ import {
   Controller,
   Get,
   Post,
-  Patch,
   Body,
   Param,
   Query,
   HttpCode,
   HttpStatus,
-  Req,
-  Res,
   Logger,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
-import { Request, Response } from 'express';
+import { ApiTags, ApiOperation, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { MeetingsService } from './meetings.service';
-import { MeetingSyncService } from './meetings-sync.service';
-import { TranscriptsService } from '../transcripts/transcripts.service';
-import { SummariesService } from '../summaries/summaries.service';
+import { CreateMeetingDto } from './dto/create-meeting.dto';
+import { QueryMeetingsDto } from './dto/query-meetings.dto';
+import { MeetingStatus } from './schemas/meeting.schema';
 import { GraphService } from '../graph/graph.service';
 import { AuthService } from '../auth/auth.service';
-import { CreateMeetingDto } from './dto/create-meeting.dto';
-import { UpdateMeetingDto } from './dto/update-meeting.dto';
-import { QueryMeetingsDto } from './dto/query-meetings.dto';
-import { Meeting, MeetingStatus } from './schemas/meeting.schema';
 
 @ApiTags('meetings')
 @Controller('meetings')
@@ -32,135 +24,226 @@ export class MeetingsController {
 
   constructor(
     private readonly meetingsService: MeetingsService,
-    private readonly meetingSyncService: MeetingSyncService,
-    private readonly transcriptsService: TranscriptsService,
-    private readonly summariesService: SummariesService,
     private readonly graphService: GraphService,
     private readonly authService: AuthService,
   ) {}
 
   // ──────────────────────────────────────────────
-  //  Sync & Webhook endpoints
+  //  Step 1: Sync meetings from Microsoft Graph
   // ──────────────────────────────────────────────
-
-  @Get('sync')
-  @ApiOperation({ summary: 'Trigger meeting sync (GET for browser, also works as status check)' })
-  async syncMeetingsGet() {
-    return this.meetingSyncService.syncNow();
-  }
 
   @Post('sync')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Manually trigger meeting sync from Microsoft Graph',
-  })
-  async syncMeetings() {
-    return this.meetingSyncService.syncNow();
+  @ApiOperation({ summary: 'Sync meetings from Microsoft Graph calendar into the database' })
+  @ApiQuery({ name: 'daysBack', required: false, description: 'How many days back to sync (default 7)' })
+  async syncMeetings(@Query('daysBack') daysBack?: string) {
+    const days = daysBack ? parseInt(daysBack, 10) : 7;
+    return this.meetingsService.syncMeetings(days);
   }
 
-  @Get('sync/status')
-  @ApiOperation({ summary: 'Check if meeting sync is active (configured with app permissions)' })
-  async getSyncStatus() {
-    return {
-      authenticated: this.meetingSyncService.getIsAuthenticated(),
-      message: this.meetingSyncService.getIsAuthenticated()
-        ? 'Sync is active — meetings are polled every minute using app-level permissions'
-        : 'Not configured. Set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, and AZURE_TARGET_USER_ID in .env',
-    };
-  }
+  // ──────────────────────────────────────────────
+  //  Standard CRUD (static routes BEFORE :id)
+  // ──────────────────────────────────────────────
 
   @Get('stats')
-  @ApiOperation({ summary: 'Get meeting statistics for dashboard' })
+  @ApiOperation({ summary: 'Get meeting statistics' })
   async getStats() {
     return this.meetingsService.getStats();
   }
 
-  /**
-   * Microsoft Graph webhook validation endpoint.
-   * Graph sends a validation request when creating a subscription.
-   */
-  @Post('webhook')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Webhook endpoint for Microsoft Graph change notifications' })
-  async handleWebhook(@Req() req: Request, @Res() res: Response) {
-    // Validation: Graph sends ?validationToken=... when creating subscription
-    const validationToken = req.query.validationToken as string;
-    if (validationToken) {
-      this.logger.log('Webhook validation request received');
-      res.set('Content-Type', 'text/plain');
-      return res.status(200).send(validationToken);
-    }
-
-    // Actual notification
-    const notifications = req.body?.value;
-    if (notifications && Array.isArray(notifications)) {
-      for (const notification of notifications) {
-        // Verify client state for security
-        if (notification.clientState !== 'teams-meeting-summarizer-secret') {
-          this.logger.warn('Invalid clientState in webhook notification');
-          continue;
-        }
-
-        this.logger.log(
-          `Webhook notification: ${notification.changeType} on ${notification.resource}`,
-        );
-
-        // Trigger a sync when we get a call record notification
-        if (notification.resource?.includes('callRecords')) {
-          // Fire and forget — don't block the webhook response
-          this.meetingSyncService.syncNow().catch((err) => {
-            this.logger.error(`Webhook-triggered sync failed: ${err.message}`);
-          });
-        }
-      }
-    }
-
-    return res.status(202).json({ status: 'accepted' });
-  }
-
-  // ──────────────────────────────────────────────
-  //  Standard CRUD
-  // ──────────────────────────────────────────────
-
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Create a new meeting' })
-  @ApiResponse({ status: HttpStatus.CREATED, type: Meeting })
-  async create(@Body() createMeetingDto: CreateMeetingDto) {
-    return this.meetingsService.create(createMeetingDto);
-  }
-
   @Get()
-  @ApiOperation({ summary: 'List all meetings with pagination and filters' })
+  @ApiOperation({ summary: 'List all meetings' })
   @ApiQuery({ name: 'status', enum: MeetingStatus, required: false })
   @ApiQuery({ name: 'startDate', required: false })
   @ApiQuery({ name: 'endDate', required: false })
-  @ApiQuery({ name: 'page', required: false, example: 1 })
-  @ApiQuery({ name: 'limit', required: false, example: 20 })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
   async findAll(@Query() query: QueryMeetingsDto) {
     return this.meetingsService.findAll(query);
   }
 
-  @Get(':id/diagnose')
-  @ApiOperation({ summary: 'Debug: diagnose why transcript/recording fetch fails for a meeting' })
+  @Post()
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a meeting manually' })
+  async create(@Body() dto: CreateMeetingDto) {
+    return this.meetingsService.create(dto);
+  }
+
+  // ──────────────────────────────────────────────
+  //  Diagnostics (static routes — must be BEFORE :id)
+  // ──────────────────────────────────────────────
+
+  @Get('graph-raw')
+  @ApiOperation({ summary: 'Raw Graph API test — see exact response from Microsoft' })
+  @ApiQuery({ name: 'path', required: true, description: 'Graph API path e.g. /users/{id}/onlineMeetings' })
+  @ApiQuery({ name: 'api', required: false, description: 'v1.0 or beta (default v1.0)' })
+  async graphRaw(
+    @Query('path') path: string,
+    @Query('api') api?: string,
+  ) {
+    if (!this.authService.isConfigured()) {
+      return { error: 'Not configured' };
+    }
+
+    const { accessToken } = await this.authService.getAppAccessToken();
+    const apiVersion = (api === 'beta' ? 'beta' : 'v1.0') as 'v1.0' | 'beta';
+
+    this.logger.log(`Raw Graph API call: ${apiVersion} ${path}`);
+    const result = await this.graphService.rawGraphGet(accessToken, path, apiVersion);
+    return { apiVersion, path, ...result };
+  }
+
+  @Get('test-graph')
+  @ApiOperation({ summary: 'Full Graph API diagnostic — test permissions and list online meetings' })
+  @ApiQuery({ name: 'meetingId', required: false, description: 'DB meeting ID to diagnose' })
+  async testGraph(@Query('meetingId') meetingId?: string) {
+    const results: any = { timestamp: new Date().toISOString(), steps: [] };
+
+    if (!this.authService.isConfigured()) {
+      results.steps.push({ step: 'auth', result: 'FAIL — not configured' });
+      return results;
+    }
+
+    const { accessToken } = await this.authService.getAppAccessToken();
+    const targetUserId = this.authService.getTargetUserId();
+    results.targetUserId = targetUserId;
+    results.steps.push({ step: 'auth', result: 'OK' });
+
+    // Step 1: Test basic permission — can we read the user's profile?
+    const profileResult = await this.graphService.rawGraphGet(accessToken, `/users/${targetUserId}`, 'v1.0');
+    results.steps.push({
+      step: 'getUserProfile',
+      result: profileResult.data ? `OK — ${profileResult.data.displayName} (${profileResult.data.id})` : `FAIL — HTTP ${profileResult.status}`,
+      rawError: profileResult.error,
+    });
+
+    // Gather user IDs to try
+    const userIds = new Set<string>();
+    userIds.add(targetUserId);
+    if (profileResult.data?.id && profileResult.data.id !== targetUserId) {
+      userIds.add(profileResult.data.id);
+    }
+
+    let dbMeeting: any = null;
+    if (meetingId) {
+      try {
+        dbMeeting = await this.meetingsService.findOne(meetingId);
+        results.dbMeeting = {
+          subject: dbMeeting.subject,
+          joinUrl: dbMeeting.joinUrl?.substring(0, 120),
+          organizerEmail: dbMeeting.organizerEmail,
+          onlineMeetingId: dbMeeting.onlineMeetingId,
+        };
+
+        const oid = this.graphService.extractOidFromJoinUrl(dbMeeting.joinUrl || '');
+        if (oid) userIds.add(oid);
+        if (dbMeeting.organizerEmail) userIds.add(dbMeeting.organizerEmail);
+      } catch (err: any) {
+        results.steps.push({ step: 'loadMeeting', result: `FAIL — ${err.message}` });
+      }
+    }
+
+    results.userIdsTested = Array.from(userIds);
+
+    // Step 1b: Resolve all user IDs to Object IDs (GUIDs)
+    const resolvedOids = new Set<string>();
+    for (const uid of userIds) {
+      const oid = await this.graphService.resolveUserObjectId(accessToken, uid);
+      resolvedOids.add(oid);
+    }
+    results.resolvedOids = Array.from(resolvedOids);
+
+    // Step 2: For each resolved OID, try listing online meetings with raw API calls
+    for (const uid of resolvedOids) {
+      for (const api of ['v1.0', 'beta'] as const) {
+        const listResult = await this.graphService.rawGraphGet(
+          accessToken,
+          `/users/${uid}/onlineMeetings`,
+          api,
+        );
+
+        const meetings = listResult.data?.value || [];
+        results.steps.push({
+          step: `listOnlineMeetings(${uid}, ${api})`,
+          result: listResult.data
+            ? `OK — ${meetings.length} meeting(s)`
+            : `FAIL — HTTP ${listResult.status}`,
+          meetings: meetings.slice(0, 5).map((m: any) => ({
+            id: m.id,
+            subject: m.subject,
+            joinWebUrl: m.joinWebUrl?.substring(0, 120),
+          })),
+          rawError: listResult.error ? {
+            code: listResult.error?.error?.code,
+            message: listResult.error?.error?.message?.substring(0, 300),
+          } : undefined,
+        });
+
+        // If we found meetings and have a DB meeting, try matching by URL
+        if (meetings.length > 0 && dbMeeting?.joinUrl) {
+          const dbBase = dbMeeting.joinUrl.split('?')[0].toLowerCase();
+          const match = meetings.find((m: any) =>
+            m.joinWebUrl && m.joinWebUrl.split('?')[0].toLowerCase() === dbBase,
+          );
+          if (match) {
+            results.steps.push({
+              step: `MATCH_FOUND(${uid}, ${api})`,
+              result: `Meeting matched! id=${match.id}, subject=${match.subject}`,
+            });
+          }
+        }
+      }
+    }
+
+    return results;
+  }
+
+  // ──────────────────────────────────────────────
+  //  Parameterized routes (:id) — MUST be LAST
+  // ──────────────────────────────────────────────
+
+  @Post(':id/fetch-transcript')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Fetch the transcript from Microsoft Graph for this meeting and save to DB' })
   @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async diagnoseMeeting(@Param('id') id: string) {
+  async fetchTranscript(@Param('id') id: string) {
+    return this.meetingsService.fetchTranscript(id);
+  }
+
+  @Post(':id/summarize')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Summarize the transcript using OpenAI GPT-4o' })
+  @ApiParam({ name: 'id', description: 'Meeting ID' })
+  async summarize(@Param('id') id: string) {
+    return this.meetingsService.summarize(id);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get a meeting by ID (with transcript and summary populated)' })
+  @ApiParam({ name: 'id', description: 'Meeting ID' })
+  async findOne(@Param('id') id: string) {
+    return this.meetingsService.findOneWithDetails(id);
+  }
+
+  @Get(':id/diagnose')
+  @ApiOperation({ summary: 'Diagnose why transcript fetch might be failing for a meeting' })
+  @ApiParam({ name: 'id', description: 'Meeting ID' })
+  async diagnose(@Param('id') id: string) {
     const meeting = await this.meetingsService.findOne(id);
     const results: any = {
       meetingId: id,
       subject: meeting.subject,
       status: meeting.status,
       joinUrl: meeting.joinUrl || '(none)',
-      hasTranscriptInDb: !!meeting.transcriptId,
-      hasSummaryInDb: !!meeting.summaryId,
-      hasRecordingKey: !!meeting.recordingStorageKey,
+      organizerEmail: meeting.organizerEmail || '(none)',
+      hasTranscript: !!meeting.transcriptId,
+      hasSummary: !!meeting.summaryId,
       isConfigured: this.authService.isConfigured(),
-      authMode: 'app-level (client credentials)',
       steps: [],
     };
 
     if (!this.authService.isConfigured()) {
-      results.steps.push({ step: 'auth', result: 'FAIL — app not configured. Set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, and AZURE_TARGET_USER_ID.' });
+      results.steps.push({ step: 'auth', result: 'FAIL — not configured' });
       return results;
     }
 
@@ -168,119 +251,90 @@ export class MeetingsController {
     try {
       const tokens = await this.authService.getAppAccessToken();
       accessToken = tokens.accessToken;
-      results.steps.push({ step: 'auth', result: 'OK — app access token acquired' });
-    } catch (error: any) {
-      results.steps.push({ step: 'auth', result: `FAIL — ${error.message}` });
+      results.steps.push({ step: 'auth', result: 'OK' });
+    } catch (err: any) {
+      results.steps.push({ step: 'auth', result: `FAIL — ${err.message}` });
       return results;
     }
-
-    const userId = this.authService.getTargetUserId();
-    results.targetUserId = userId;
 
     if (!meeting.joinUrl) {
-      results.steps.push({ step: 'joinUrl', result: 'FAIL — meeting has no joinUrl stored. Cannot resolve online meeting.' });
+      results.steps.push({ step: 'joinUrl', result: 'FAIL — no joinUrl' });
       return results;
     }
-    results.steps.push({ step: 'joinUrl', result: `OK — ${meeting.joinUrl.substring(0, 80)}...` });
 
-    try {
-      const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(accessToken, userId, meeting.joinUrl);
-      if (!onlineMeeting) {
-        results.steps.push({ step: 'resolveOnlineMeeting', result: 'FAIL — could not resolve online meeting from joinUrl. Check OnlineMeetings.Read.All application permission and admin consent.' });
-        return results;
+    const targetUserId = this.authService.getTargetUserId();
+    const oid = this.graphService.extractOidFromJoinUrl(meeting.joinUrl);
+    results.organizerOidFromUrl = oid || '(none)';
+
+    // Try resolving via OData filter
+    const resolved = await this.graphService.getOnlineMeetingByJoinUrl(
+      accessToken, targetUserId, meeting.joinUrl, meeting.organizerEmail,
+    );
+
+    if (!resolved) {
+      results.steps.push({ step: 'resolveViaFilter', result: 'FAIL — JoinWebUrl filter returned nothing' });
+
+      const candidates = new Set<string>();
+      if (oid) candidates.add(oid);
+      if (meeting.organizerEmail) candidates.add(meeting.organizerEmail);
+      candidates.add(targetUserId);
+
+      // Resolve candidates to Object IDs first
+      const resolvedCandidates = new Set<string>();
+      for (const c of candidates) {
+        const oid = await this.graphService.resolveUserObjectId(accessToken, c);
+        resolvedCandidates.add(oid);
       }
-      results.onlineMeetingId = onlineMeeting.meetingId;
-      results.steps.push({ step: 'resolveOnlineMeeting', result: `OK — resolved to ${onlineMeeting.meetingId}` });
 
-      // Check transcripts
-      const transcripts = await this.graphService.listMeetingTranscripts(accessToken, userId, onlineMeeting.meetingId);
-      results.transcriptsFound = transcripts.length;
-      if (transcripts.length === 0) {
-        results.steps.push({ step: 'listTranscripts', result: 'FAIL — no transcripts found. Was "Start transcription" clicked during the meeting? Also needs OnlineMeetingTranscript.Read.All application permission.' });
-      } else {
-        results.steps.push({ step: 'listTranscripts', result: `OK — found ${transcripts.length} transcript(s)` });
-
-        try {
-          const vtt = await this.graphService.getTranscriptContent(accessToken, userId, onlineMeeting.meetingId, transcripts[0].id, 'text/vtt');
-          const parsed = this.graphService.parseVttTranscript(vtt);
-          results.steps.push({ step: 'fetchTranscriptContent', result: `OK — ${parsed.segments.length} segments, ${parsed.fullText.length} chars` });
-          results.transcriptPreview = parsed.fullText.substring(0, 500);
-        } catch (err: any) {
-          results.steps.push({ step: 'fetchTranscriptContent', result: `FAIL — ${err.message}` });
+      for (const uid of resolvedCandidates) {
+        // Use raw API to see exact error
+        for (const api of ['v1.0', 'beta'] as const) {
+          const rawResult = await this.graphService.rawGraphGet(
+            accessToken,
+            `/users/${uid}/onlineMeetings`,
+            api,
+          );
+          const meetings = rawResult.data?.value || [];
+          results.steps.push({
+            step: `rawList(${uid}, ${api})`,
+            httpStatus: rawResult.status,
+            result: rawResult.data ? `${meetings.length} meeting(s)` : 'FAIL',
+            meetings: meetings.slice(0, 5).map((m: any) => ({
+              id: m.id,
+              subject: m.subject,
+              joinWebUrl: m.joinWebUrl?.substring(0, 100),
+            })),
+            rawError: rawResult.error ? {
+              code: rawResult.error?.error?.code,
+              message: rawResult.error?.error?.message?.substring(0, 200),
+            } : undefined,
+          });
         }
       }
 
-      // Check recordings
-      const recordings = await this.graphService.listMeetingRecordings(accessToken, userId, onlineMeeting.meetingId);
-      results.recordingsFound = recordings.length;
-      if (recordings.length === 0) {
-        results.steps.push({ step: 'listRecordings', result: 'No recordings found.' });
-      } else {
-        results.steps.push({ step: 'listRecordings', result: `OK — found ${recordings.length} recording(s)` });
-      }
-    } catch (err: any) {
-      results.steps.push({ step: 'graphApiCall', result: `FAIL — ${err.message}` });
+      return results;
     }
+
+    results.steps.push({ step: 'resolve', result: `OK → ${resolved.meetingId} via ${resolved.resolvedViaUserId}` });
+    const userId = resolved.resolvedViaUserId;
+
+    const transcripts = await this.graphService.listMeetingTranscripts(accessToken, userId, resolved.meetingId);
+    results.steps.push({ step: 'transcripts', result: `Found ${transcripts.length}` });
+
+    if (transcripts.length > 0) {
+      try {
+        const vtt = await this.graphService.getTranscriptContent(accessToken, userId, resolved.meetingId, transcripts[0].id, 'text/vtt');
+        const parsed = this.graphService.parseVttTranscript(vtt);
+        results.steps.push({ step: 'transcriptContent', result: `OK — ${parsed.segments.length} segments, ${parsed.fullText.length} chars` });
+        results.transcriptPreview = parsed.fullText.substring(0, 500);
+      } catch (err: any) {
+        results.steps.push({ step: 'transcriptContent', result: `FAIL — ${err.message}` });
+      }
+    }
+
+    const recordings = await this.graphService.listMeetingRecordings(accessToken, userId, resolved.meetingId);
+    results.steps.push({ step: 'recordings', result: `Found ${recordings.length}` });
 
     return results;
-  }
-
-  @Get(':id/transcript')
-  @ApiOperation({ summary: 'Get transcript for a specific meeting' })
-  @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async getTranscript(@Param('id') id: string) {
-    const transcripts = await this.transcriptsService.findByMeetingId(id);
-    if (transcripts.length === 0) {
-      return null;
-    }
-    return transcripts[transcripts.length - 1]; // Return the latest transcript
-  }
-
-  @Get(':id/summary')
-  @ApiOperation({ summary: 'Get AI summary for a specific meeting' })
-  @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async getSummary(@Param('id') id: string) {
-    const summaries = await this.summariesService.findByMeetingId(id);
-    if (summaries.length === 0) {
-      return null;
-    }
-    return summaries[summaries.length - 1]; // Return the latest summary
-  }
-
-  @Get(':id')
-  @ApiOperation({ summary: 'Get a specific meeting by ID' })
-  @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async findOne(@Param('id') id: string) {
-    return this.meetingsService.findOne(id);
-  }
-
-  @Patch(':id')
-  @ApiOperation({ summary: 'Update a meeting' })
-  @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async update(@Param('id') id: string, @Body() updateMeetingDto: UpdateMeetingDto) {
-    return this.meetingsService.update(id, updateMeetingDto);
-  }
-
-  @Post(':id/process')
-  @HttpCode(HttpStatus.ACCEPTED)
-  @ApiOperation({ summary: 'Trigger meeting processing (transcription + summarization)' })
-  @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async processMeeting(@Param('id') id: string) {
-    return this.meetingsService.processMeeting(id);
-  }
-
-  @Get(':id/status')
-  @ApiOperation({ summary: 'Get the processing status of a meeting' })
-  @ApiParam({ name: 'id', description: 'Meeting ID' })
-  async getStatus(@Param('id') id: string) {
-    const meeting = await this.meetingsService.findOne(id);
-    return {
-      id: meeting._id,
-      status: meeting.status,
-      subject: meeting.subject,
-      transcriptId: meeting.transcriptId || null,
-      summaryId: meeting.summaryId || null,
-      errorMessage: meeting.errorMessage || null,
-    };
   }
 }

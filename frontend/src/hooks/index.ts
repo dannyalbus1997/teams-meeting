@@ -1,8 +1,8 @@
 export {
   useMeetings,
   useMeeting,
-  useMeetingTranscript,
-  useMeetingSummary,
-  useProcessMeeting,
+  useMeetingStats,
+  useFetchTranscript,
+  useSummarizeMeeting,
   useToggleActionItem,
 } from './useMeetings';

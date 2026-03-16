@@ -25,39 +25,27 @@ interface HeaderProps {
   onRefresh?: () => void;
 }
 
-/**
- * App header component with title, sync button, refresh button, and user avatar
- */
 export function Header({ title = 'Teams Meeting Summarizer', onRefresh }: HeaderProps) {
   const [syncing, setSyncing] = useState(false);
-  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' | 'info' }>({
-    open: false,
-    message: '',
-    severity: 'info',
-  });
+  const [snackbar, setSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: 'success' | 'error' | 'info';
+  }>({ open: false, message: '', severity: 'info' });
 
   const handleSync = async () => {
     setSyncing(true);
     try {
-      const result = await syncMeetings();
+      const result = await syncMeetings(7);
       setSnackbar({
         open: true,
-        message: result.message || `Synced ${result.synced} meeting(s) from Teams`,
+        message: `Synced ${result.synced} new meeting(s) from ${result.total} calendar events`,
         severity: result.synced > 0 ? 'success' : 'info',
       });
-      // Auto-refresh the list after sync
-      if (onRefresh) {
-        setTimeout(() => onRefresh(), 500);
-      }
+      if (onRefresh) setTimeout(() => onRefresh(), 500);
     } catch (error: any) {
       const msg = error?.response?.data?.message || error.message || 'Sync failed';
-      setSnackbar({
-        open: true,
-        message: msg.includes('Not configured')
-          ? 'Not configured. Set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, and AZURE_TARGET_USER_ID in .env'
-          : `Sync failed: ${msg}`,
-        severity: 'error',
-      });
+      setSnackbar({ open: true, message: `Sync failed: ${msg}`, severity: 'error' });
     } finally {
       setSyncing(false);
     }
@@ -76,56 +64,29 @@ export function Header({ title = 'Teams Meeting Summarizer', onRefresh }: Header
         }}
       >
         <Toolbar>
-          <Typography
-            variant="h6"
-            sx={{
-              fontWeight: 700,
-              fontSize: '1.125rem',
-              flex: 1,
-            }}
-          >
+          <Typography variant="h6" sx={{ fontWeight: 700, fontSize: '1.125rem', flex: 1 }}>
             {title}
           </Typography>
 
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Tooltip title="Sync meetings from Teams">
               <span>
-                <IconButton
-                  color="secondary"
-                  onClick={handleSync}
-                  disabled={syncing}
-                  size="small"
-                >
-                  {syncing ? (
-                    <CircularProgress size={20} color="inherit" />
-                  ) : (
-                    <SyncIcon />
-                  )}
+                <IconButton color="secondary" onClick={handleSync} disabled={syncing} size="small">
+                  {syncing ? <CircularProgress size={20} color="inherit" /> : <SyncIcon />}
                 </IconButton>
               </span>
             </Tooltip>
 
             {onRefresh && (
               <Tooltip title="Refresh">
-                <IconButton
-                  color="primary"
-                  onClick={onRefresh}
-                  size="small"
-                >
+                <IconButton color="primary" onClick={onRefresh} size="small">
                   <RefreshIcon />
                 </IconButton>
               </Tooltip>
             )}
 
             <Tooltip title="User profile">
-              <Avatar
-                sx={{
-                  backgroundColor: 'primary.main',
-                  width: 40,
-                  height: 40,
-                  cursor: 'pointer',
-                }}
-              >
+              <Avatar sx={{ backgroundColor: 'primary.main', width: 40, height: 40, cursor: 'pointer' }}>
                 <PersonIcon />
               </Avatar>
             </Tooltip>
