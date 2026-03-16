@@ -23,6 +23,7 @@ import {
 import { TranscriptsService } from '../transcripts/transcripts.service';
 import { SummariesService } from '../summaries/summaries.service';
 import { GraphService } from '../graph/graph.service';
+import { AuthService } from '../auth/auth.service';
 
 @Injectable()
 export class MeetingsService {
@@ -36,6 +37,7 @@ export class MeetingsService {
     private transcriptsService: TranscriptsService,
     private summariesService: SummariesService,
     private graphService: GraphService,
+    private authService: AuthService,
   ) {}
 
   async create(createMeetingDto: CreateMeetingDto): Promise<MeetingDocument> {
@@ -229,9 +231,9 @@ export class MeetingsService {
 
   /**
    * Process a meeting: tries existing transcript → Graph API transcript → stored recording.
-   * Accepts an optional accessToken to fetch transcripts from Graph API on-demand.
+   * Uses app-level (client credentials) permissions to fetch from Graph API automatically.
    */
-  async processMeeting(id: string, accessToken?: string): Promise<MeetingDocument> {
+  async processMeeting(id: string): Promise<MeetingDocument> {
     const meeting = await this.findOne(id);
 
     // ── Option 1: Use existing transcript in DB ──
@@ -250,18 +252,24 @@ export class MeetingsService {
       }
     }
 
-    // ── Option 2: Fetch transcript from Graph API ──
-    if (accessToken && meeting.joinUrl) {
+    // ── Option 2: Fetch transcript from Graph API (app-level permissions) ──
+    if (this.authService.isConfigured() && meeting.joinUrl) {
       this.logger.log(`Trying to fetch transcript from Graph API for meeting ${id}...`);
       try {
+        const tokens = await this.authService.getAppAccessToken();
+        const accessToken = tokens.accessToken;
+        const userId = this.authService.getTargetUserId();
+
         const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(
           accessToken,
+          userId,
           meeting.joinUrl,
         );
 
         if (onlineMeeting) {
           const transcripts = await this.graphService.listMeetingTranscripts(
             accessToken,
+            userId,
             onlineMeeting.meetingId,
           );
 
@@ -269,6 +277,7 @@ export class MeetingsService {
             const latestTranscript = transcripts[transcripts.length - 1];
             const vttContent = await this.graphService.getTranscriptContent(
               accessToken,
+              userId,
               onlineMeeting.meetingId,
               latestTranscript.id,
               'text/vtt',
@@ -285,6 +294,7 @@ export class MeetingsService {
           // Try recordings if no transcript
           const recordings = await this.graphService.listMeetingRecordings(
             accessToken,
+            userId,
             onlineMeeting.meetingId,
           );
 
@@ -292,6 +302,7 @@ export class MeetingsService {
             const latestRecording = recordings[recordings.length - 1];
             const audioBuffer = await this.graphService.getRecordingContent(
               accessToken,
+              userId,
               onlineMeeting.meetingId,
               latestRecording.id,
             );

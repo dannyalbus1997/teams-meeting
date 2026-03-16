@@ -10,6 +10,7 @@ import { SpeechModule } from '../speech/speech.module';
 import { AiModule } from '../ai/ai.module';
 import { StorageModule } from '../storage/storage.module';
 import { GraphModule } from '../graph/graph.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { GraphModule } from '../graph/graph.module';
     forwardRef(() => AiModule),
     forwardRef(() => StorageModule),
     GraphModule,
+    AuthModule,
   ],
   controllers: [MeetingsController],
   providers: [MeetingsService, MeetingSyncService],

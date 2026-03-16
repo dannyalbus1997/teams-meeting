@@ -1,14 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  ConfidentialClientApplication,
-  AuthorizationCodeRequest,
-} from '@azure/msal-node';
+import { ConfidentialClientApplication } from '@azure/msal-node';
 
 export interface AuthTokens {
   accessToken: string;
-  refreshToken?: string;
-  idToken?: string;
   expiresOn: Date;
 }
 
@@ -21,33 +16,43 @@ export interface UserProfile {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
   private cca: ConfidentialClientApplication | null = null;
   private clientId: string;
   private clientSecret: string;
   private tenantId: string;
-  private redirectUri: string;
-  private scopes: string[];
+  private appScopes: string[];
+
+  // Cached app token
+  private cachedToken: AuthTokens | null = null;
+
+  // The user whose calendar/meetings we will access via app permissions
+  private targetUserId: string;
 
   constructor(private configService: ConfigService) {
     this.clientId = this.configService.get<string>('azure.clientId') || '';
     this.clientSecret = this.configService.get<string>('azure.clientSecret') || '';
     this.tenantId = this.configService.get<string>('azure.tenantId') || 'common';
-    this.redirectUri = this.configService.get<string>('azure.redirectUri') || 'http://localhost:3001/api/auth/callback';
-    this.scopes = [
-      'User.Read',
-      'Calendars.Read',
-      'OnlineMeetings.Read',
-      'OnlineMeetingTranscript.Read.All',
-      'OnlineMeetingRecording.Read.All',
-      'offline_access',
-    ];
+    this.targetUserId = this.configService.get<string>('azure.targetUserId') || '';
+
+    // App-only (client credential) permissions use the /.default scope.
+    // This uses whatever **Application** permissions are granted to the app registration
+    // in Azure AD (e.g. Calendars.Read, OnlineMeetings.Read.All, etc.).
+    this.appScopes = ['https://graph.microsoft.com/.default'];
 
     if (!this.clientId || !this.clientSecret) {
-      console.warn(
+      this.logger.warn(
         'Microsoft OAuth is not configured. ' +
         'Set AZURE_CLIENT_ID and AZURE_CLIENT_SECRET in .env to enable Teams integration.',
       );
       return;
+    }
+
+    if (!this.targetUserId) {
+      this.logger.warn(
+        'AZURE_TARGET_USER_ID is not set. ' +
+        'Set it to the Object ID or UPN of the user whose meetings you want to sync.',
+      );
     }
 
     this.cca = new ConfidentialClientApplication({
@@ -57,109 +62,68 @@ export class AuthService {
         clientSecret: this.clientSecret,
       },
     });
+
+    this.logger.log('Auth service initialized with app-level (client credentials) flow');
   }
 
-  async getAuthUrl(state?: string): Promise<string> {
+  /**
+   * Get the target user ID whose calendar/meetings we access.
+   * This can be an Azure AD Object ID (GUID) or a UPN (user@domain.com).
+   */
+  getTargetUserId(): string {
+    return this.targetUserId;
+  }
+
+  /**
+   * Acquire an application-level access token using the client credentials flow.
+   * This uses app-only permissions (no user/delegate context) based on the
+   * **Application** permissions granted to your Azure AD app registration.
+   *
+   * Tokens are cached and automatically refreshed when expired.
+   */
+  async getAppAccessToken(): Promise<AuthTokens> {
     if (!this.cca) {
       throw new UnauthorizedException('Microsoft OAuth is not configured');
     }
 
-    const authUrl = await this.cca.getAuthCodeUrl({
-      scopes: this.scopes,
-      redirectUri: this.redirectUri,
-      state: state || this.generateRandomState(),
-    });
-
-    return authUrl;
-  }
-
-  async handleCallback(code: string): Promise<AuthTokens> {
-    if (!this.cca) {
-      throw new UnauthorizedException('Microsoft OAuth is not configured');
+    // Return cached token if still valid
+    if (this.cachedToken && !this.isTokenExpired(this.cachedToken.expiresOn)) {
+      return this.cachedToken;
     }
 
     try {
-      const tokenRequest: AuthorizationCodeRequest = {
-        code,
-        scopes: this.scopes,
-        redirectUri: this.redirectUri,
-      };
-
-      const response = await this.cca.acquireTokenByCode(tokenRequest);
-
-      if (!response || !response.accessToken) {
-        throw new UnauthorizedException('Failed to acquire access token');
-      }
-
-      return {
-        accessToken: response.accessToken,
-        idToken: response.idToken,
-        expiresOn: response.expiresOn || new Date(Date.now() + 3600 * 1000),
-      };
-    } catch (error) {
-      throw new UnauthorizedException(
-        `OAuth callback failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
-  }
-
-  async refreshToken(refreshToken: string): Promise<AuthTokens> {
-    if (!this.cca) {
-      throw new UnauthorizedException('Microsoft OAuth is not configured');
-    }
-
-    try {
-      const response = await this.cca.acquireTokenByRefreshToken({
-        refreshToken,
-        scopes: this.scopes,
+      const response = await this.cca.acquireTokenByClientCredential({
+        scopes: this.appScopes,
       });
 
       if (!response || !response.accessToken) {
-        throw new UnauthorizedException('Failed to refresh access token');
+        throw new UnauthorizedException('Failed to acquire app access token');
       }
 
-      return {
+      this.cachedToken = {
         accessToken: response.accessToken,
-        idToken: response.idToken,
         expiresOn: response.expiresOn || new Date(Date.now() + 3600 * 1000),
       };
+
+      this.logger.log('App access token acquired/refreshed successfully');
+      return this.cachedToken;
     } catch (error) {
+      this.cachedToken = null;
       throw new UnauthorizedException(
-        `Token refresh failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to acquire app access token: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
     }
+  }
+
+  /**
+   * Check if the service is properly configured and can obtain tokens.
+   */
+  isConfigured(): boolean {
+    return !!this.cca && !!this.targetUserId;
   }
 
   isTokenExpired(expiresOn: Date): boolean {
-    const buffer = 5 * 60 * 1000;
+    const buffer = 5 * 60 * 1000; // 5 minutes
     return new Date(expiresOn.getTime() - buffer) < new Date();
-  }
-
-  async getUserProfile(accessToken: string): Promise<UserProfile> {
-    try {
-      const tokenParts = accessToken.split('.');
-      if (tokenParts.length !== 3) {
-        throw new Error('Invalid token format');
-      }
-
-      const payload = JSON.parse(
-        Buffer.from(tokenParts[1], 'base64').toString('utf-8'),
-      );
-
-      return {
-        id: payload.oid || payload.sub,
-        displayName: payload.name || 'Unknown',
-        mail: payload.email || payload.upn || '',
-        jobTitle: payload.jobTitle,
-      };
-    } catch (error) {
-      throw new UnauthorizedException(
-        `Failed to get user profile: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      );
-    }
-  }
-
-  private generateRandomState(): string {
-    return Buffer.from(Math.random().toString()).toString('base64').substring(0, 32);
   }
 }

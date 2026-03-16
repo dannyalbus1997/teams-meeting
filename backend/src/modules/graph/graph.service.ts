@@ -70,16 +70,17 @@ export class GraphService {
   }
 
   // ──────────────────────────────────────────────
-  //  Calendar Events
+  //  Calendar Events (App-level: /users/{userId}/calendarview)
   // ──────────────────────────────────────────────
 
   async getCalendarEvents(
     accessToken: string,
+    userId: string,
     startDate: Date,
     endDate: Date,
   ): Promise<CalendarEvent[]> {
     try {
-      const response = await this.axiosClient.get('/me/calendarview', {
+      const response = await this.axiosClient.get(`/users/${userId}/calendarview`, {
         headers: this.getAuthHeaders(accessToken),
         params: {
           startDateTime: startDate.toISOString(),
@@ -140,16 +141,18 @@ export class GraphService {
 
   // ──────────────────────────────────────────────
   //  Online Meeting details (by joinWebUrl)
+  //  App-level: /users/{userId}/onlineMeetings
   // ──────────────────────────────────────────────
 
   async getOnlineMeetingByJoinUrl(
     accessToken: string,
+    userId: string,
     joinWebUrl: string,
   ): Promise<{ meetingId: string; subject: string } | null> {
     try {
       const encodedUrl = encodeURIComponent(joinWebUrl);
       const response = await this.axiosClient.get(
-        `/me/onlineMeetings?$filter=JoinWebUrl eq '${encodedUrl}'`,
+        `/users/${userId}/onlineMeetings?$filter=JoinWebUrl eq '${encodedUrl}'`,
         { headers: this.getAuthHeaders(accessToken) },
       );
       const meeting = response.data.value?.[0];
@@ -162,16 +165,18 @@ export class GraphService {
   }
 
   // ──────────────────────────────────────────────
-  //  Transcripts  (requires OnlineMeetingTranscript.Read.All)
+  //  Transcripts  (App-level: /users/{userId}/onlineMeetings/{id}/transcripts)
+  //  Requires OnlineMeetingTranscript.Read.All application permission
   // ──────────────────────────────────────────────
 
   async listMeetingTranscripts(
     accessToken: string,
+    userId: string,
     onlineMeetingId: string,
   ): Promise<{ id: string; createdDateTime: string }[]> {
     try {
       const response = await this.betaClient.get(
-        `/me/onlineMeetings/${onlineMeetingId}/transcripts`,
+        `/users/${userId}/onlineMeetings/${onlineMeetingId}/transcripts`,
         { headers: this.getAuthHeaders(accessToken) },
       );
       return response.data.value || [];
@@ -183,13 +188,14 @@ export class GraphService {
 
   async getTranscriptContent(
     accessToken: string,
+    userId: string,
     onlineMeetingId: string,
     transcriptId: string,
     format: 'text/vtt' | 'text/plain' = 'text/vtt',
   ): Promise<string> {
     try {
       const response = await this.betaClient.get(
-        `/me/onlineMeetings/${onlineMeetingId}/transcripts/${transcriptId}/content`,
+        `/users/${userId}/onlineMeetings/${onlineMeetingId}/transcripts/${transcriptId}/content`,
         {
           headers: {
             ...this.getAuthHeaders(accessToken),
@@ -205,16 +211,18 @@ export class GraphService {
   }
 
   // ──────────────────────────────────────────────
-  //  Recordings  (requires OnlineMeetingRecording.Read.All)
+  //  Recordings  (App-level: /users/{userId}/onlineMeetings/{id}/recordings)
+  //  Requires OnlineMeetingRecording.Read.All application permission
   // ──────────────────────────────────────────────
 
   async listMeetingRecordings(
     accessToken: string,
+    userId: string,
     onlineMeetingId: string,
   ): Promise<{ id: string; createdDateTime: string }[]> {
     try {
       const response = await this.betaClient.get(
-        `/me/onlineMeetings/${onlineMeetingId}/recordings`,
+        `/users/${userId}/onlineMeetings/${onlineMeetingId}/recordings`,
         { headers: this.getAuthHeaders(accessToken) },
       );
       return response.data.value || [];
@@ -226,12 +234,13 @@ export class GraphService {
 
   async getRecordingContent(
     accessToken: string,
+    userId: string,
     onlineMeetingId: string,
     recordingId: string,
   ): Promise<Buffer> {
     try {
       const response = await this.betaClient.get(
-        `/me/onlineMeetings/${onlineMeetingId}/recordings/${recordingId}/content`,
+        `/users/${userId}/onlineMeetings/${onlineMeetingId}/recordings/${recordingId}/content`,
         {
           headers: this.getAuthHeaders(accessToken),
           responseType: 'arraybuffer',
@@ -244,7 +253,7 @@ export class GraphService {
   }
 
   // ──────────────────────────────────────────────
-  //  Call Records  (requires CallRecords.Read.All)
+  //  Call Records  (App-level: requires CallRecords.Read.All)
   // ──────────────────────────────────────────────
 
   async getRecentCallRecords(
@@ -324,12 +333,12 @@ export class GraphService {
   }
 
   // ──────────────────────────────────────────────
-  //  User Profile
+  //  User Profile (App-level: /users/{userId})
   // ──────────────────────────────────────────────
 
-  async getUserProfile(accessToken: string): Promise<GraphUserProfile> {
+  async getUserProfile(accessToken: string, userId: string): Promise<GraphUserProfile> {
     try {
-      const response = await this.axiosClient.get('/me', {
+      const response = await this.axiosClient.get(`/users/${userId}`, {
         headers: this.getAuthHeaders(accessToken),
         params: {
           $select: 'id,displayName,mail,mobilePhone,jobTitle',

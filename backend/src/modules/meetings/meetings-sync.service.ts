@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { GraphService } from '../graph/graph.service';
+import { AuthService } from '../auth/auth.service';
 import { MeetingsService } from './meetings.service';
 import { Meeting, MeetingDocument, MeetingStatus } from './schemas/meeting.schema';
 
@@ -11,34 +12,37 @@ import { Meeting, MeetingDocument, MeetingStatus } from './schemas/meeting.schem
 export class MeetingSyncService {
   private readonly logger = new Logger(MeetingSyncService.name);
 
-  private accessToken: string | null = null;
-  private tokenExpiresAt: Date | null = null;
-
   // Cache resolved online meeting IDs
   private onlineMeetingIdCache: Map<string, string> = new Map();
 
   constructor(
     @InjectModel(Meeting.name) private meetingModel: Model<MeetingDocument>,
     private graphService: GraphService,
+    private authService: AuthService,
     private meetingsService: MeetingsService,
     private configService: ConfigService,
   ) {}
 
-  setAccessToken(token: string, expiresAt: Date) {
-    this.accessToken = token;
-    this.tokenExpiresAt = expiresAt;
-    this.logger.log('Access token updated — automatic meeting sync is now active');
-  }
-
+  /**
+   * Check if the app is properly configured for automatic sync.
+   */
   getIsAuthenticated(): boolean {
-    return !!this.accessToken && !!this.tokenExpiresAt && this.tokenExpiresAt > new Date();
+    return this.authService.isConfigured();
   }
 
-  getAccessToken(): string | null {
-    if (this.getIsAuthenticated()) {
-      return this.accessToken;
-    }
-    return null;
+  /**
+   * Get a fresh app access token (auto-refreshed by AuthService).
+   */
+  private async getAccessToken(): Promise<string> {
+    const tokens = await this.authService.getAppAccessToken();
+    return tokens.accessToken;
+  }
+
+  /**
+   * Get the target user ID for Graph API calls.
+   */
+  private getTargetUserId(): string {
+    return this.authService.getTargetUserId();
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -50,11 +54,14 @@ export class MeetingSyncService {
     try {
       this.logger.log('Starting meeting sync...');
 
+      const accessToken = await this.getAccessToken();
+      const userId = this.getTargetUserId();
       const startDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const endDate = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
       const events = await this.graphService.getCalendarEvents(
-        this.accessToken!,
+        accessToken,
+        userId,
         startDate,
         endDate,
       );
@@ -166,8 +173,11 @@ export class MeetingSyncService {
       return this.onlineMeetingIdCache.get(joinUrl)!;
     }
 
+    const accessToken = await this.getAccessToken();
+    const userId = this.getTargetUserId();
     const onlineMeeting = await this.graphService.getOnlineMeetingByJoinUrl(
-      this.accessToken!,
+      accessToken,
+      userId,
       joinUrl,
     );
 
@@ -195,7 +205,8 @@ export class MeetingSyncService {
         return;
       }
 
-      const token = this.accessToken!;
+      const accessToken = await this.getAccessToken();
+      const userId = this.getTargetUserId();
       const onlineMeetingId = await this.resolveOnlineMeetingId(event.onlineMeetingUrl);
 
       if (!onlineMeetingId) {
@@ -205,14 +216,16 @@ export class MeetingSyncService {
 
       // Try native transcript
       const transcripts = await this.graphService.listMeetingTranscripts(
-        token,
+        accessToken,
+        userId,
         onlineMeetingId,
       );
 
       if (transcripts.length > 0) {
         const latestTranscript = transcripts[transcripts.length - 1];
         const vttContent = await this.graphService.getTranscriptContent(
-          token,
+          accessToken,
+          userId,
           onlineMeetingId,
           latestTranscript.id,
           'text/vtt',
@@ -251,14 +264,16 @@ export class MeetingSyncService {
       // Fallback: recording (only for ended meetings)
       if (!isLive) {
         const recordings = await this.graphService.listMeetingRecordings(
-          token,
+          accessToken,
+          userId,
           onlineMeetingId,
         );
 
         if (recordings.length > 0) {
           const latestRecording = recordings[recordings.length - 1];
           const audioBuffer = await this.graphService.getRecordingContent(
-            token,
+            accessToken,
+            userId,
             onlineMeetingId,
             latestRecording.id,
           );
@@ -287,14 +302,17 @@ export class MeetingSyncService {
 
   async syncNow(): Promise<{ synced: number; message: string }> {
     if (!this.getIsAuthenticated()) {
-      return { synced: 0, message: 'Not authenticated. Please login first at /api/auth/login' };
+      return { synced: 0, message: 'Not configured. Set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, and AZURE_TARGET_USER_ID in .env' };
     }
 
+    const accessToken = await this.getAccessToken();
+    const userId = this.getTargetUserId();
     const startDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
     const endDate = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
     const events = await this.graphService.getCalendarEvents(
-      this.accessToken!,
+      accessToken,
+      userId,
       startDate,
       endDate,
     );

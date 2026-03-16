@@ -53,8 +53,8 @@ export function Header({ title = 'Teams Meeting Summarizer', onRefresh }: Header
       const msg = error?.response?.data?.message || error.message || 'Sync failed';
       setSnackbar({
         open: true,
-        message: msg.includes('Not authenticated')
-          ? 'Not authenticated. Please login first at /api/auth/login'
+        message: msg.includes('Not configured')
+          ? 'Not configured. Set AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, and AZURE_TARGET_USER_ID in .env'
           : `Sync failed: ${msg}`,
         severity: 'error',
       });
