@@ -165,7 +165,7 @@ export default function MeetingsPage() {
               <Grid container spacing={2}>
                 {data!.data.map((meeting) => (
                   <Grid item xs={12} sm={6} md={4} key={meeting._id || meeting.id}>
-                    <MeetingCard meeting={meeting} />
+                    <MeetingCard meeting={meeting} onProcessed={() => refetch()} />
                   </Grid>
                 ))}
               </Grid>

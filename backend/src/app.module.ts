@@ -10,6 +10,7 @@ import { GraphModule } from './modules/graph/graph.module';
 import { SpeechModule } from './modules/speech/speech.module';
 import { AiModule } from './modules/ai/ai.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { BotModule } from './modules/bot/bot.module';
 import configuration from './config/configuration';
 
 @Module({
@@ -34,6 +35,7 @@ import configuration from './config/configuration';
     MeetingsModule,
     TranscriptsModule,
     SummariesModule,
+    BotModule,
   ],
 })
 export class AppModule {}

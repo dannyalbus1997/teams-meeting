@@ -43,6 +43,15 @@ export default () => ({
     },
   },
 
+  bot: {
+    // The public URL where your backend is reachable (ngrok for local dev)
+    callbackBaseUrl: process.env.BOT_CALLBACK_URL || 'https://your-ngrok-url.ngrok-free.app/api',
+    // Azure Bot Service app ID (can be same as AZURE_CLIENT_ID or separate)
+    appId: process.env.BOT_APP_ID || process.env.AZURE_CLIENT_ID,
+    appSecret: process.env.BOT_APP_SECRET || process.env.AZURE_CLIENT_SECRET,
+    tenantId: process.env.BOT_TENANT_ID || process.env.AZURE_TENANT_ID,
+  },
+
   speech: {
     provider: process.env.SPEECH_PROVIDER || 'mock',
     whisperApiUrl: process.env.WHISPER_API_URL || 'http://localhost:9000/asr',

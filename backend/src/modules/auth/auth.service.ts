@@ -39,6 +39,7 @@ export class AuthService {
       'OnlineMeetings.Read',
       'OnlineMeetingTranscript.Read.All',
       'OnlineMeetingRecording.Read.All',
+      // 'OnlineMeetingArtifact.Read.All',
       'offline_access',
     ];
 

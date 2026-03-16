@@ -112,10 +112,65 @@ export const createMeeting = async (
 };
 
 /**
+ * Diagnose why a meeting can't be processed
+ */
+export const diagnoseMeeting = async (id: string): Promise<any> => {
+  const response = await apiClient.get(`/meetings/${id}/diagnose`);
+  return response.data;
+};
+
+/**
  * Trigger meeting sync from Microsoft Teams
  */
 export const syncMeetings = async (): Promise<{ synced: number; message: string }> => {
   const response = await apiClient.get<{ synced: number; message: string }>('/meetings/sync');
+  return response.data;
+};
+
+// ── Bot APIs ──
+
+/**
+ * Bot joins a meeting and starts recording
+ */
+export const botJoinMeeting = async (meetingId: string): Promise<{
+  message: string;
+  callId: string;
+  status: string;
+  meetingId: string;
+}> => {
+  const response = await apiClient.post(`/bot/join/${meetingId}`);
+  return response.data;
+};
+
+/**
+ * Bot leaves a meeting and triggers processing
+ */
+export const botLeaveMeeting = async (callId: string): Promise<{ message: string; callId: string }> => {
+  const response = await apiClient.delete(`/bot/leave/${callId}`);
+  return response.data;
+};
+
+/**
+ * Get bot status for a specific meeting
+ */
+export const getBotStatus = async (meetingId: string): Promise<{
+  active: boolean;
+  callId?: string;
+  status?: string;
+  message?: string;
+}> => {
+  const response = await apiClient.get(`/bot/status/${meetingId}`);
+  return response.data;
+};
+
+/**
+ * Get all active bot calls
+ */
+export const getBotActiveCalls = async (): Promise<{
+  activeCalls: number;
+  calls: any[];
+}> => {
+  const response = await apiClient.get('/bot/status');
   return response.data;
 };
 
